@@ -4,8 +4,10 @@
   "description": "A permission-aware AI purchasing agent. AI proposes purchases but never authorizes them. A quarantined LLM extractor and a deterministic policy engine block prompt-injected or out-of-mandate buys, and PayPal Checkout plus server-side verification handle approval and capture. Built for the PayPal AI Hackathon",
   "main": "index.js",
   "scripts": {
-    "test": "node --test server/test",
-    "spike": "node scripts/paypal-spike.js"
+    "test": "node --test server/test/*.test.js",
+    "start": "node server/src/index.js",
+    "spike": "node scripts/paypal-spike.js",
+    "attacks": "node attacks/run.js"
   },
   "repository": {
     "type": "git",
