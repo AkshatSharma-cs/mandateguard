@@ -1,0 +1,7 @@
+[
+  { "merchant_id": "m_acme", "name": "Acme Peripherals Co.", "approved_default": true },
+  { "merchant_id": "m_byte", "name": "ByteForge Electronics", "approved_default": true },
+  { "merchant_id": "m_zen",  "name": "Zen Input Solutions",  "approved_default": true },
+  { "merchant_id": "m_shady","name": "Shady Deals Outlet",   "approved_default": false },
+  { "merchant_id": "m_flash","name": "FlashSale Bazaar",     "approved_default": false }
+]
