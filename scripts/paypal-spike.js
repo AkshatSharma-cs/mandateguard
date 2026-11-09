@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createOrder, getOrder, captureOrder, PayPalError } from '../server/src/paypal/client.js';
 
@@ -60,6 +61,12 @@ app.post('/spike/capture', async (req, res) => {
     }
 
     const before = await getOrder(order_id);
+    const beforeUnit = before.purchase_units?.[0] || {};
+    check('server-created order id matches', before.id === order_id, `got ${before.id}`);
+    check('order amount is $24.99', beforeUnit.amount?.value === '24.99', `got ${beforeUnit.amount?.value}`);
+    check('order currency is USD', beforeUnit.amount?.currency_code === 'USD', `got ${beforeUnit.amount?.currency_code}`);
+    check('invoice_id binds the proposal', beforeUnit.invoice_id === proposal_id, `got ${beforeUnit.invoice_id}`);
+    check('custom_id binds the proposal', beforeUnit.custom_id === proposal_id, `got ${beforeUnit.custom_id}`);
     if (!check('order status APPROVED before capture', before.status === 'APPROVED', `got ${before.status}`)) {
       return res.status(409).json({ assertions, raw: before });
     }
@@ -67,7 +74,10 @@ app.post('/spike/capture', async (req, res) => {
     await captureOrder(order_id, 'capture_' + proposal_id);
 
     const after = await getOrder(order_id);
+    const afterUnit = after.purchase_units?.[0] || {};
     check('order status COMPLETED after capture', after.status === 'COMPLETED', `got ${after.status}`);
+    check('captured amount is $24.99', afterUnit.amount?.value === '24.99', `got ${afterUnit.amount?.value}`);
+    check('captured currency is USD', afterUnit.amount?.currency_code === 'USD', `got ${afterUnit.amount?.currency_code}`);
 
     const pu = after.purchase_units?.[0] || {};
     const capture = pu.payments?.captures?.[0];
@@ -86,8 +96,14 @@ app.post('/spike/capture', async (req, res) => {
     for (const [k, v] of Object.entries(summary)) console.log(`${k}: ${v}`);
     console.log('\n=== RAW getOrder (final) ===');
     console.log(JSON.stringify(after, null, 2));
+    const passed = assertions.filter((assertion) => assertion.pass).length;
+    console.log(`\nAssertions: ${passed}/${assertions.length} PASS`);
+    const rawPath = path.join(__dirname, '..', 'tmp', 'paypal-spike-order.json');
+    await mkdir(path.dirname(rawPath), { recursive: true });
+    await writeFile(rawPath, `${JSON.stringify(after, null, 2)}\n`);
+    console.log(`Saved sandbox order response locally to ${path.relative(path.join(__dirname, '..'), rawPath)}`);
 
-    res.json({ summary, assertions, raw: after });
+    res.status(passed === assertions.length ? 200 : 502).json({ summary, assertions, raw: after });
   } catch (err) {
     logError(err);
     res.status(500).json({ error: err.message, debug_id: err.debugId ?? null, assertions });
