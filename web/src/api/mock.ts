@@ -1,5 +1,6 @@
 import type { AuditEvent, AuditResult, Candidate, CaptureResult, Decision, EvaluateResult, Mandate, Product, ProductObservation, Profile, ProfileLimits, Proposal, RunResult, TestResults } from '../types';
 import { ApiError } from './error';
+import snapshotData from './results.snapshot.json';
 import { evidenceQuotes, expectedDecisions, merchants, products, verificationLabels } from './fixtures';
 
 const delay = () => new Promise<void>(resolve => window.setTimeout(resolve, 550));
@@ -398,7 +399,7 @@ export const mock = {
   async getPublicConfig() { await delay(); return { paypal_client_id: '', currency: 'USD' }; },
   async getTestResults(): Promise<TestResults> {
     await delay();
-    throw new ApiError('RESULTS_NOT_FOUND', 'No results yet. Run npm run attacks, then reload.', 404);
+    return { ...snapshotData as TestResults, source: 'snapshot' };
   },
   async resetMock() { await auditWrite; currentMandate = null; profiles = [seededProfile()]; auditEvents.splice(0); proposalById.clear(); orderByProposal.clear(); capturedProposalIds.clear(); nextEventId = 1; captureNumber = 1; mandateNumber = 1; proposalNumber = 1; runNumber = 1; },
 };

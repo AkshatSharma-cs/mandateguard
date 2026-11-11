@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { AlertCircle, Ban, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ExternalLink, Menu, TriangleAlert, X } from 'lucide-react';
+import { AlertCircle, Ban, Check, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Copy, ExternalLink, TriangleAlert, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Button, EmptyState, KeyValueList, Money, Mono, Panel, Skeleton, SourceTag, StatusPill, Tag, Textarea } from '../components/ui';
 import PayPalCheckout from '../components/PayPalCheckout';
@@ -46,6 +46,10 @@ function ProductLink({ title, url, domain }: { title: string; url?: string; doma
   return <span className="console-product-link">{url && <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${title} on ${domain} in a new tab`}>{title}<ExternalLink size={16} aria-hidden="true" /></a>}<Tag>{domain}</Tag></span>;
 }
 
+function ListingSource({ source }: { source: ProductObservation['source'] }) {
+  return <Tag variant={source === 'channel3' ? 'brand' : 'neutral'}>{source === 'channel3' ? 'Live' : source === 'curated' ? 'Demo store' : 'Page'}</Tag>;
+}
+
 function runObservationFor(run: RunResult | null, productId: string): ProductObservation | undefined {
   return run?.candidates.find(candidate => candidate.product_id === productId)?.observation;
 }
@@ -87,31 +91,29 @@ export default function ConsolePage() {
 
   return <div className="console-page">
     <div className="container">
-      <header className="console-heading"><h1>Console</h1><Tag variant="sandbox">Sandbox</Tag><a className="preferences-shortcut" href="#/preferences">Preferences</a><Button className="console-audit-trigger" variant="outline" size="sm" onClick={() => setAuditOpen(true)}><Menu size={16} />Audit trail</Button></header>
+      <header className="console-heading"><h1>Console</h1><Tag variant="sandbox">Sandbox</Tag><a className="preferences-shortcut" href="#/preferences">Preferences</a></header>
       <div className="console-grid">
         <Panel className="console-panel mandate-panel" title="Mandate" headingLevel={2}>
           {!mandate ? <form onSubmit={event => void createMandate(event)}>
-            <Textarea id="mandate-instruction" label="What are you shopping for? (optional)" rows={3} value={instruction} onChange={event => setInstruction(event.target.value)} disabled={store.loading.parse} />
+            <Textarea id="mandate-instruction" label="What are you shopping for?" rows={3} value={instruction} onChange={event => setInstruction(event.target.value)} disabled={store.loading.parse} />
             {hasDefaultProfile && <p className="profile-usage"><Tag variant="brand">Using your preferences</Tag> <a href="#/preferences">Preferences</a></p>}
             <button type="button" className="console-example" onClick={() => setInstruction('Find a wireless keyboard under $50. Only approved merchants. No bundles.')}>Find a wireless keyboard under $50. Only approved merchants. No bundles.</button>
-            <Button type="submit" size="md" disabled={(!instruction.trim() && !hasDefaultProfile) || store.loading.parse}>{store.loading.parse ? 'Creating…' : 'Create mandate'}</Button>
+            <Button type="submit" size="md" disabled={!instruction.trim() || store.loading.parse}>{store.loading.parse ? 'Creating…' : 'Create mandate'}</Button>
             <AnimatePresence initial={false}>{store.errors.parse && <InlineError key="parse-error" message={store.errors.parse.message} retry={() => void store.parseMandate(instruction)} onClose={() => store.clearError('parse')} reduced={motionPrefs.prefersReducedMotion} />}</AnimatePresence>
           </form> : <MandateDetails />}
           {store.loading.catalogue && <div className="catalogue-loading"><Skeleton width="100%" /><Skeleton width="72%" /></div>}
           <AnimatePresence initial={false}>{store.errors.catalogue && <InlineError key="catalogue-error" message={store.errors.catalogue.message} retry={() => void store.loadCatalogue()} onClose={() => store.clearError('catalogue')} reduced={motionPrefs.prefersReducedMotion} />}</AnimatePresence>
         </Panel>
 
-        <Panel className="console-panel agent-panel" title="Agent run" headingLevel={2} action={<Button size="md" onClick={() => void run()} disabled={mandate?.status !== 'active' || store.loading.run}>{store.loading.run ? 'Running…' : 'Run both'}</Button>}>
+        <Panel className="console-panel agent-panel" title="Agent run" headingLevel={2} action={<div className="agent-panel-actions"><Button className="console-audit-trigger" variant="outline" size="md" onClick={() => setAuditOpen(true)}><ClipboardList size={16} aria-hidden="true" />Audit trail</Button><Button size="md" onClick={() => void run()} disabled={mandate?.status !== 'active' || store.loading.run}>{store.loading.run ? 'Running…' : 'Run both'}</Button></div>}>
           <AnimatePresence initial={false}>{store.errors.run && <InlineError key="run-error" message={store.errors.run.message} retry={() => void run()} onClose={() => store.clearError('run')} reduced={motionPrefs.prefersReducedMotion} />}</AnimatePresence>
           {store.loading.run && <RunSkeleton />}
           {!store.loading.run && !store.runs.naive && !store.runs.protected && <EmptyState sentence="Confirm a mandate, then run both agents." />}
           {!store.loading.run && store.runs.naive && store.runs.protected && <div className="agent-columns" aria-live="polite">
-            <NaiveRun run={store.runs.naive} />
             <ProtectedRun run={store.runs.protected} expandedId={expandedId} onExpand={id => setExpandedId(current => current === id ? '' : id)} onCheckout={store.openCheckout} paid={store.captureResult?.status === 'CAPTURED'} />
+            <NaiveRun run={store.runs.naive} />
           </div>}
         </Panel>
-
-        <AuditPanel copyEvents={() => void copyEvents()} copied={auditJsonCopied} />
       </div>
     </div>
 
@@ -184,7 +186,13 @@ function NaiveRun({ run }: { run: RunResult }) {
   if (!proposal) return <section className="agent-column"><h3 className="text-h3">Without MandateGuard</h3><EmptyState sentence="The agent returned no proposal." /></section>;
   return <section className="agent-column naive-column">
     <h3 className="agent-column-title">Without MandateGuard</h3><p className="agent-caption">Unprotected agent. The policy engine only observes.</p>
-    <div className="console-table-wrap"><table className="console-table"><thead><tr><th>Product</th><th className="numeric">Price</th><th className="numeric">Quantity</th></tr></thead><tbody>{proposal.items.map((item, index) => <tr key={`${item.sku}-${index}`}><td>{catalogProduct ? <ProductLink title={catalogProduct.title} url={candidate?.observation.url ?? catalogProduct.url} domain={candidate?.observation.domain ?? catalogProduct.domain ?? 'demo storefront'} /> : item.name}<small>{item.sku}</small></td><td className="numeric"><Money cents={item.unit_price_cents} currency={proposal.currency} /></td><td className="numeric">{item.quantity}</td></tr>)}</tbody></table></div>
+    <div className="console-table-wrap"><table className="console-table"><thead><tr><th>Product</th><th className="numeric">Price</th><th className="numeric">Quantity</th></tr></thead><tbody>{proposal.items.map((item, index) => {
+      const itemCandidate = run.candidates.find(entry => entry.product_id === item.sku);
+      const itemProduct = catalogProducts.find(product => product.product_id === item.sku);
+      const itemTitle = itemProduct?.title ?? itemCandidate?.observation.title ?? item.name;
+      const itemDomain = itemCandidate?.observation.domain ?? itemProduct?.domain ?? 'store';
+      return <tr key={`${item.sku}-${index}`}><td>{itemCandidate?.observation.url || itemProduct?.url ? <ProductLink title={itemTitle} url={itemCandidate?.observation.url ?? itemProduct?.url} domain={itemDomain} /> : itemTitle}{itemCandidate?.observation && <ListingSource source={itemCandidate.observation.source} />}<small>{item.sku}</small></td><td className="numeric"><Money cents={item.unit_price_cents} currency={proposal.currency} /></td><td className="numeric">{item.quantity}</td></tr>;
+    })}</tbody></table></div>
     {run.naive_reasoning && <blockquote className="reasoning-quote">{run.naive_reasoning}</blockquote>}
     <div className="unauthorized-notice"><strong>Would be unauthorized</strong><p>{candidate?.reasons.map(reason => reasonMessage(reason.code, catalogProduct, 3000, reason.message)).join(' ') || 'The proposal is outside the mandate.'}</p></div>
     <div className="unsafe-total"><span>Total</span><Money cents={proposal.total_cents} currency={proposal.currency} /></div>
@@ -194,6 +202,7 @@ function NaiveRun({ run }: { run: RunResult }) {
 
 function ProtectedRun({ run, expandedId, onExpand, onCheckout, paid }: { run: RunResult; expandedId: string; onExpand: (id: string) => void; onCheckout: () => void; paid: boolean }) {
   const store = useStore();
+  const motionPrefs = useReducedMotionVariants();
   const [showEvidence, setShowEvidence] = useState(false);
   const productsById = useMemo(() => new Map((store.catalogue?.products ?? fixtureProducts).map(product => [product.product_id, product])), [store.catalogue]);
   const candidates = [...run.candidates].sort((a, b) => ({ ALLOW: 0, REVIEW: 1, BLOCK: 2 }[a.decision] - { ALLOW: 0, REVIEW: 1, BLOCK: 2 }[b.decision]));
@@ -208,19 +217,19 @@ function ProtectedRun({ run, expandedId, onExpand, onCheckout, paid }: { run: Ru
     const observation = candidate?.observation;
     return <section className="agent-column protected-column">
       <h3 className="agent-column-title">With MandateGuard</h3>
-      <div className="quiet-allowed"><StatusPill status="ALLOW" /><ProductLink title={item?.name ?? 'Product'} url={observation?.url} domain={observation?.domain ?? 'approved merchant'} /><span><Money cents={proposal.total_cents} currency={proposal.currency} /></span><p>Matches your preferences</p><div className="quiet-actions"><Button size="md" disabled={paid} onClick={onCheckout}>{paid ? 'Paid' : 'Review and pay'}</Button><button className="text-action" type="button" aria-expanded={showEvidence} onClick={() => setShowEvidence(value => !value)}>{showEvidence ? 'Hide evidence' : 'Show evidence'}</button></div>
+      <div className="quiet-allowed"><StatusPill status="ALLOW" /><ProductLink title={observation?.title ?? item?.name ?? 'Product'} url={observation?.url} domain={observation?.domain ?? 'approved merchant'} />{observation && <ListingSource source={observation.source} />}<span><Money cents={proposal.total_cents} currency={proposal.currency} /></span><p>Matches your preferences</p><div className="quiet-actions">{proposalProduct ? <Button size="md" disabled={paid} onClick={onCheckout}>{paid ? 'Paid' : 'Review and pay'}</Button> : observation?.url && <a className="button button-outline button-md" href={observation.url} target="_blank" rel="noopener noreferrer">Open store listing<ExternalLink size={16} aria-hidden="true" /></a>}<button className="text-action" type="button" aria-expanded={showEvidence} onClick={() => setShowEvidence(value => !value)}>{showEvidence ? 'Hide evidence' : 'Show evidence'}</button></div>{!proposalProduct && <p className="merchant-checkout-note">Checkout takes place on the merchant site and is outside MandateGuard.</p>}
       <AnimatePresence initial={false}>{showEvidence && candidate && <motion.div className="candidate-details" initial={motionPrefs.prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }} animate={motionPrefs.prefersReducedMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }} exit={motionPrefs.prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }} transition={{ duration: motionPrefs.prefersReducedMotion ? 0.15 : 0.3, ease: expoOut }}>{candidate.checks?.map(check => <p key={check.code}>{check.passed ? 'Passed' : 'Failed'}: {check.code.replaceAll('_', ' ')}</p>)}{candidate.extraction?.evidence.map((quote, index) => <blockquote className="evidence-quote mono" key={`${index}-${quote}`}>{quote}</blockquote>)}</motion.div>}</AnimatePresence></div>
     </section>;
   }
   return <section className="agent-column protected-column">
     <h3 className="agent-column-title">With MandateGuard</h3><p className="agent-caption">Every listing is analyzed as untrusted data, then checked against your mandate.</p>
-    {candidates.length === 0 ? <EmptyState sentence="No listing passed your mandate. Nothing will be purchased." /> : <div className="console-table-wrap"><table className="console-table"><thead><tr><th>Product</th><th className="numeric">Price</th><th>Decision</th></tr></thead><tbody>{candidates.map(candidate => {
+    {candidates.length === 0 ? <EmptyState sentence={run.discovery_provider === 'channel3' ? 'No live marketplace listings matched this search.' : 'No live marketplace listings were returned. Check Channel3 setup or try another search.'} /> : <div className="console-table-wrap"><table className="console-table"><thead><tr><th>Product</th><th className="numeric">Price</th><th>Decision</th></tr></thead><tbody>{candidates.map(candidate => {
       const product = productsById.get(candidate.product_id);
       const expanded = expandedId === candidate.product_id;
       const candidateAlternatives = candidate.alternatives?.length ? candidate.alternatives : allowedAlternatives.filter(item => item.evaluation_id && item.observation.title.toLowerCase() !== candidate.observation.title.toLowerCase() && item.observation.domain !== candidate.observation.domain && (!candidate.observation.category_hint || item.observation.category_hint === candidate.observation.category_hint)).slice(0, 3).map(item => ({ evaluation_id: item.evaluation_id!, observation: item.observation, decision: 'ALLOW' as const, reasons: [] }));
-      return <FragmentRows key={candidate.product_id} candidate={candidate} product={product} merchantName={store.catalogue?.merchants.find(merchant => merchant.merchant_id === product?.merchant_id)?.name} expanded={expanded} onExpand={() => onExpand(candidate.product_id)} allowedAlternatives={candidate.decision === 'ALLOW' ? [] : candidateAlternatives} />;
+      return <FragmentRows key={candidate.product_id} candidate={candidate} product={product} merchantName={store.catalogue?.merchants.find(merchant => merchant.merchant_id === product?.merchant_id)?.name ?? candidate.observation.seller} expanded={expanded} onExpand={() => onExpand(candidate.product_id)} allowedAlternatives={candidate.decision === 'ALLOW' ? [] : candidateAlternatives} />;
     })}</tbody></table></div>}
-    {proposal ? <div className="proposal-bar"><div className="proposal-description">{proposalProduct ? <ProductLink title={proposalProduct.title} url={proposalCandidate?.observation.url ?? proposalProduct.url} domain={proposalCandidate?.observation.domain ?? proposalProduct.domain ?? 'demo storefront'} /> : <strong>{proposal.items.map(item => item.name).join(', ')}</strong>}<span>{store.catalogue?.merchants.find(merchant => merchant.merchant_id === proposal.merchant_id)?.name ?? proposal.merchant_id} · <Money cents={proposal.total_cents} currency={proposal.currency} /></span></div><StatusPill status="ALLOW" /><Button size="md" disabled={paid || proposal.source === 'naive'} onClick={onCheckout}>{paid ? 'Paid' : 'Review and pay'}</Button></div> : <EmptyState sentence="No listing passed your mandate. Nothing will be purchased." />}
+    {proposal ? <div className="proposal-bar"><div className="proposal-description">{proposalCandidate?.observation.url ? <><ProductLink title={proposalCandidate.observation.title} url={proposalCandidate.observation.url} domain={proposalCandidate.observation.domain} /><ListingSource source={proposalCandidate.observation.source} /></> : proposalProduct ? <ProductLink title={proposalProduct.title} url={proposalProduct.url} domain={proposalProduct.domain ?? 'store'} /> : <strong>{proposal.items.map(item => item.name).join(', ')}</strong>}<span>{proposalCandidate?.observation.seller ?? store.catalogue?.merchants.find(merchant => merchant.merchant_id === proposal.merchant_id)?.name ?? proposal.merchant_id} · <Money cents={proposal.total_cents} currency={proposal.currency} /></span></div><StatusPill status="ALLOW" />{proposalProduct ? <Button size="md" disabled={paid || proposal.source === 'naive'} onClick={onCheckout}>{paid ? 'Paid' : 'Review and pay'}</Button> : proposalCandidate?.observation.url && <a className="button button-outline button-md" href={proposalCandidate.observation.url} target="_blank" rel="noopener noreferrer">Open store listing<ExternalLink size={16} aria-hidden="true" /></a>}</div> : <EmptyState sentence="No listing passed your mandate. Nothing will be purchased." />}
   </section>;
 }
 
@@ -230,7 +239,7 @@ function FragmentRows({ candidate, product, merchantName, expanded, onExpand, al
   const motionPrefs = useReducedMotionVariants();
   const expandTransition = { duration: motionPrefs.prefersReducedMotion ? 0.15 : 0.3, ease: expoOut };
   return <>
-    <tr className="candidate-row"><td>{product && <ProductLink title={product.title} url={candidate.observation?.url ?? product.url} domain={candidate.observation?.domain ?? product.domain ?? 'demo storefront'} />}<button className="candidate-expand" aria-expanded={expanded} aria-label={`${expanded ? 'Hide' : 'Show'} evidence for ${product?.title ?? candidate.product_id}`} onClick={onExpand}>{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}{expanded ? 'Hide evidence' : 'Show evidence'}</button><small>{merchantName ?? (product ? fixtureMerchants.find(merchant => merchant.merchant_id === product.merchant_id)?.name : candidate.product_id)}</small></td><td className="numeric">{product ? <Money cents={product.price_cents} currency={product.currency} /> : '—'}</td><td><StatusPill status={candidate.decision} /></td></tr>
+    <tr className="candidate-row"><td><ProductLink title={candidate.observation.title ?? product?.title ?? candidate.product_id} url={candidate.observation.url ?? product?.url} domain={candidate.observation.domain ?? product?.domain ?? 'store'} /><ListingSource source={candidate.observation.source} /><button className="candidate-expand" aria-expanded={expanded} aria-label={`${expanded ? 'Hide' : 'Show'} evidence for ${candidate.observation.title ?? product?.title ?? candidate.product_id}`} onClick={onExpand}>{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}{expanded ? 'Hide evidence' : 'Show evidence'}</button><small>{merchantName ?? (product ? fixtureMerchants.find(merchant => merchant.merchant_id === product.merchant_id)?.name : candidate.observation.seller ?? candidate.product_id)}</small></td><td className="numeric"><Money cents={candidate.observation.price_cents ?? product?.price_cents ?? 0} currency={candidate.observation.currency ?? product?.currency ?? 'USD'} /></td><td><StatusPill status={candidate.decision} /></td></tr>
     <AnimatePresence initial={false}>{expanded && <motion.tr className="candidate-details-row" key="details" initial={motionPrefs.prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }} animate={motionPrefs.prefersReducedMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }} exit={motionPrefs.prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }} transition={expandTransition}><td colSpan={3}><motion.div className="candidate-details" initial={motionPrefs.prefersReducedMotion ? undefined : { height: 0 }} animate={motionPrefs.prefersReducedMotion ? undefined : { height: 'auto' }} exit={motionPrefs.prefersReducedMotion ? undefined : { height: 0 }} transition={expandTransition}>
       {candidate.reasons.length > 0 && <div className="candidate-reasons">{candidate.reasons.map(reason => <p key={`${reason.code}-${reason.source}`}>{reasonMessage(reason.code, product, mandateLimit, reason.message)}<code>{reason.code}</code><SourceTag children={reason.source === 'ai' ? 'AI' : 'Rule'} /></p>)}</div>}
       {candidate.checks && <div className="rule-checks">{candidate.checks.map(check => <p className={check.passed ? 'rule-check-passed' : 'rule-check-failed'} key={check.code}>{check.passed ? <CheckCircle2 size={16} aria-hidden="true" /> : <AlertCircle size={16} aria-hidden="true" />}<span>{check.code.replaceAll('_', ' ')}: {check.passed ? 'Passed' : 'Failed'}</span></p>)}</div>}
@@ -244,10 +253,6 @@ function FragmentRows({ candidate, product, merchantName, expanded, onExpand, al
 function reasonMessage(code: string, product: Product | undefined, limit: number, fallback?: string) {
   if (!product) return fallback ?? code;
   return reasonText[code]?.(product, limit) ?? fallback ?? code;
-}
-
-function AuditPanel({ copyEvents, copied }: { copyEvents: () => void; copied: boolean }) {
-  return <aside className="console-panel audit-panel"><AuditContent copyEvents={copyEvents} copied={copied} /></aside>;
 }
 
 function AuditContent({ copyEvents, copied }: { copyEvents: () => void; copied: boolean }) {
@@ -310,10 +315,11 @@ function CheckoutDrawer() {
         { label: 'Total', value: <Money cents={proposal.total_cents} currency={proposal.currency} /> },
         { label: 'Mandate version', value: proposal.mandate_version },
       ]} />}
-      <p className="checkout-copy">PayPal approval is your confirmation. The server re-checks everything before capture.</p>
+        {product && <p className="checkout-copy">PayPal approval is your confirmation. The server re-checks everything before capture.</p>}
+        {!product && proposal && <div className="checkout-external"><p>This listing was checked against your mandate. Checkout takes place on the merchant site, outside MandateGuard.</p>{proposalCandidate?.observation.url && <a className="button button-outline button-md" href={proposalCandidate.observation.url} target="_blank" rel="noopener noreferrer">Open store listing<ExternalLink size={16} aria-hidden="true" /></a>}</div>}
       <AnimatePresence initial={false}>{store.errors.checkout && <InlineError key="checkout-error" message={store.errors.checkout.message} retry={() => void store.createCheckout()} onClose={() => store.clearError('checkout')} reduced={motionPrefs.prefersReducedMotion} />}</AnimatePresence>
       <AnimatePresence initial={false}>{store.errors.capture && <InlineError key="capture-error" message={store.errors.capture.message} retry={() => proposal?.paypal_order_id && void store.capture(proposal.paypal_order_id)} onClose={() => store.clearError('capture')} reduced={motionPrefs.prefersReducedMotion} />}</AnimatePresence>
-      {proposal?.source === 'protected' && <PayPalCheckout proposalId={proposal.proposal_id} disabled={store.captureResult?.status === 'CAPTURED'} busy={store.loading.checkout || store.loading.capture} onCreateOrder={store.createCheckout} onCapture={store.capture} />}
+        {proposal?.source === 'protected' && product && <PayPalCheckout proposalId={proposal.proposal_id} disabled={store.captureResult?.status === 'CAPTURED'} busy={store.loading.checkout || store.loading.capture} onCreateOrder={store.createCheckout} onCapture={store.capture} />}
       {store.captureResult && <CaptureDisplay result={store.captureResult} orderId={proposal?.paypal_order_id ?? ''} />}
       </motion.div></Dialog.Content>
     </>}</AnimatePresence></Dialog.Portal>

@@ -4,8 +4,8 @@ import { Button, EmptyState, Input, KeyValueList, Money, Panel, Skeleton, Tag, T
 import { api, ApiError } from '../api/client';
 import type { Profile, ProfileLimits } from '../types';
 
-const defaultDomains = ['acme.localhost', 'bytebarn.localhost', 'zenith.localhost'];
-const domainNames: Record<string, string> = { 'acme.localhost': 'Acme Peripherals', 'bytebarn.localhost': 'ByteBarn', 'zenith.localhost': 'Zenith Supply' };
+const defaultDomains = ['amazon.com', 'walmart.com', 'target.com', 'bestbuy.com', 'newegg.com', 'bhphotovideo.com'];
+const domainNames: Record<string, string> = { 'amazon.com': 'Amazon', 'walmart.com': 'Walmart', 'target.com': 'Target', 'bestbuy.com': 'Best Buy', 'newegg.com': 'Newegg', 'bhphotovideo.com': 'B&H Photo' };
 
 export default function PreferencesPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -15,7 +15,7 @@ export default function PreferencesPage() {
   const [amount, setAmount] = useState('100.00');
   const [allowBundles, setAllowBundles] = useState(false);
   const [allowAddons, setAllowAddons] = useState(false);
-  const [firstParty, setFirstParty] = useState(false);
+  const [firstParty, setFirstParty] = useState(true);
   const [domains, setDomains] = useState(defaultDomains);
   const [domainDraft, setDomainDraft] = useState('');
   const [wordMode, setWordMode] = useState(false);

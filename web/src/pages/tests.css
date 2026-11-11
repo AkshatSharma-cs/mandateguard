@@ -1,12 +1,23 @@
 .tests-page { min-height: calc(100vh - 320px); padding-block: 64px; }
+.tests-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .tests-heading h1 { margin: 0; }
-.tests-intro { margin: 16px 0 32px; }
+.tests-actions { display: flex; align-items: center; gap: 12px; }
+.tests-intro { margin: 16px 0 8px; }
+.tests-hint, .tests-progress { margin: 0 0 24px; color: var(--color-ink-2); font-size: var(--text-small); }
 .tests-loading { display: grid; gap: 16px; }
 .tests-error { display: flex; align-items: center; gap: 16px; color: var(--color-block-fg); }
 .tests-error p { flex: 1; margin: 0; }
-.tests-aggregate { margin-bottom: 24px; }
+.tests-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 32px 0 24px; }
+.tests-metric { min-width: 0; padding: 20px; }
+.tests-metric h2 { margin: 0; font-size: var(--text-micro); font-weight: 500; }
+.tests-metric-value { margin: 12px 0 4px; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tests-metric-meaning { margin: 0; color: var(--color-ink-2); font-size: var(--text-small); line-height: 1.45; }
 .tests-cases { margin-bottom: 24px; }
-.tests-table-wrap { overflow-x: auto; }
-.tests-table-wrap .data-table { min-width: 880px; }
+.tests-table-wrap { max-width: 100%; overflow-x: auto; }
+.tests-table-wrap .data-table { width: 100%; }
+.tests-case-group > tr:first-child th { padding-top: 20px; background: var(--color-mist); text-align: left; text-transform: capitalize; }
+.tests-product-id { display: block; color: var(--color-ink-3); font-size: var(--text-micro); }
 .tests-settings { max-width: 640px; }
-@media (max-width: 767px) { .tests-page { padding-block: 48px; } }
+@media (max-width: 900px) { .tests-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 767px) { .tests-page { padding-block: 48px; } .tests-heading { align-items: flex-start; flex-direction: column; } .tests-summary { gap: 12px; } }
+@media (max-width: 420px) { .tests-summary { grid-template-columns: 1fr; } }

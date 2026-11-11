@@ -13,11 +13,17 @@ export type ProductObservation = { observation_id: string; url: string; domain: 
 export type Alternative = { evaluation_id: string; observation: ProductObservation; decision: 'ALLOW'; reasons: Reason[] };
 export type EvaluateResult = { evaluation_id: string; decision: Decision; reasons: Reason[]; checks: Check[]; observation: ProductObservation; expires_at: string; alternatives: Alternative[] };
 export type Candidate = { product_id: string; decision: Decision; reasons: Reason[]; checks?: Check[]; extraction: Extraction | null; observation: ProductObservation; evaluation_id?: string; alternatives?: Alternative[] };
-export type RunResult = { run_id: string; mode: 'naive' | 'protected'; enforced: boolean; candidates: Candidate[]; proposal: Proposal | null; naive_reasoning: string | null; would_have_been?: Decision; allowed_alternative_ids?: string[] };
+export type CompareLink = { query: string; store: string; url: string };
+export type RunResult = { run_id: string; mode: 'naive' | 'protected'; enforced: boolean; candidates: Candidate[]; proposal: Proposal | null; naive_reasoning: string | null; would_have_been?: Decision; allowed_alternative_ids?: string[]; compare_links?: CompareLink[]; discovery_provider?: 'channel3' | 'curated'; listing_count?: number };
 export type AuditEvent = { id: number; ts: string; actor: string; event_type: string; mandate_id: string | null; proposal_id: string | null; payload: any; hash: string };
 export type VerifyCheck = { id: string; passed: boolean; detail: string };
 export type CaptureResult = { status: string; checks: VerifyCheck[]; capture: { id: string; amount: string } | null };
-export type TestResults = { settings?: Record<string, string>; cases: { case_id: string; product_id: string; attack_type: string; expected_decision: Decision; decision: Decision; policy_ok: boolean; unsafe_count?: number; runs?: number; extractor_hit?: boolean | null }[]; aggregate?: Record<string, number> };
+export type TestResults = {
+  settings?: Record<string, string | number | null>;
+  cases: { case_id: string; product_id: string; attack_type: string; expected_decision: Decision; expected_codes?: string[]; unprotected?: { status: string; runs_completed: number; unsafe_count: number | null; unsafe_rate: number | null }; extractor_hit?: boolean | null; policy?: { decision: Decision; codes: string[]; policy_ok: boolean } }[];
+  aggregate?: Record<string, number | null>;
+  source?: 'live' | 'snapshot';
+};
 export type Catalogue = { merchants: Merchant[]; products: Product[] };
 export type PublicConfig = { paypal_client_id: string; currency: string };
 export type AuditResult = { events: AuditEvent[]; chain_ok: boolean };

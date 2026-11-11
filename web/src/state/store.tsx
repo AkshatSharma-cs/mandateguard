@@ -1,3 +1,4 @@
+// web/src/state/store.tsx
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, type ReactNode } from 'react';
 import { api, ApiError } from '../api/client';
 import type { AuditEvent, CaptureResult, Catalogue, Mandate, Proposal, RunResult } from '../types';
@@ -119,7 +120,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const runBoth = () => act('run', async () => {
     if (!state.mandate) return;
     const mandateId = state.mandate.mandate_id;
-    const [naive, protectedRun] = await Promise.all([api.runAgent(mandateId, 'naive'), api.runAgent(mandateId, 'protected')]);
+    let partialNaive: RunResult | null = null;
+    let partialProtected: RunResult | null = null;
+    dispatch({ type: 'runs', value: { naive: null, protected: null } });
+    const { naive, protected: protectedRun } = await api.runBothAgent(mandateId, event => {
+      const runId = String(event.data.run_id ?? 'streaming');
+      if (event.type === 'phase' && event.data.name === 'searching') void refreshAudit(mandateId).catch(() => undefined);
+      if (event.type === 'candidate') {
+        const candidate = event.data as unknown as RunResult['candidates'][number];
+        partialProtected = { run_id: runId, mode: 'protected', enforced: true,
+          candidates: [...(partialProtected?.candidates ?? []), { ...candidate, extraction: null }], proposal: partialProtected?.proposal ?? null,
+          naive_reasoning: null, allowed_alternative_ids: partialProtected?.allowed_alternative_ids ?? [], compare_links: partialProtected?.compare_links ?? [] };
+        dispatch({ type: 'runs', value: { naive: partialNaive, protected: partialProtected } });
+        void refreshAudit(mandateId).catch(() => undefined);
+      } else if (event.type === 'naive') {
+        const proposal = event.data.proposal as Proposal | null;
+        partialNaive = { run_id: runId, mode: 'naive', enforced: false, candidates: partialNaive?.candidates ?? [],
+          proposal, naive_reasoning: String(event.data.reasoning ?? ''), would_have_been: event.data.would_have_been as RunResult['would_have_been'] };
+        dispatch({ type: 'runs', value: { naive: partialNaive, protected: partialProtected } });
+      } else if (event.type === 'proposal') {
+        partialProtected = { run_id: runId, mode: 'protected', enforced: true, candidates: partialProtected?.candidates ?? [],
+          proposal: event.data.proposal as Proposal | null, naive_reasoning: null,
+          allowed_alternative_ids: event.data.allowed_alternative_ids as string[], compare_links: partialProtected?.compare_links ?? [] };
+        dispatch({ type: 'runs', value: { naive: partialNaive, protected: partialProtected } });
+      } else if (event.type === 'compare_links') {
+        partialProtected = { run_id: runId, mode: 'protected', enforced: true, candidates: partialProtected?.candidates ?? [],
+          proposal: partialProtected?.proposal ?? null, naive_reasoning: null, allowed_alternative_ids: partialProtected?.allowed_alternative_ids ?? [],
+          compare_links: event.data.links as RunResult['compare_links'] };
+        dispatch({ type: 'runs', value: { naive: partialNaive, protected: partialProtected } });
+      }
+    });
     dispatch({ type: 'runs', value: { naive, protected: protectedRun } });
     dispatch({ type: 'proposal', value: protectedRun.proposal }); dispatch({ type: 'capture', value: null });
     await refreshAudit(mandateId);
