@@ -1,0 +1,28 @@
+:root {
+  color-scheme: light;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #000000;
+  background: #FFFFFF;
+}
+* { box-sizing: border-box; }
+body { width: 360px; margin: 0; }
+main { padding: 20px; }
+.eyebrow { margin: 0 0 8px; color: #002994; font-size: 13px; font-weight: 600; }
+h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; }
+.intro { margin: 8px 0 16px; color: #4A5568; font-size: 14px; line-height: 20px; }
+form { display: grid; gap: 8px; }
+label { margin-top: 4px; color: #4A5568; font-size: 13px; font-weight: 600; }
+input, select, textarea { width: 100%; border: 1px solid #7B8494; border-radius: 8px; padding: 10px 12px; color: #000000; background: #FFFFFF; font: inherit; font-size: 14px; }
+textarea { resize: vertical; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid #002994; outline-offset: 2px; }
+button { min-height: 44px; margin-top: 8px; border: 0; border-radius: 9999px; padding: 0 18px; color: #FFFFFF; background: #002994; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { color: #5B6472; background: #EEF0F3; cursor: not-allowed; }
+.notice { margin: 14px 0 0; color: #4A5568; font-size: 12px; line-height: 17px; }
+.error { margin: 12px 0 0; color: #B3261E; font-size: 13px; line-height: 18px; }
+#result { margin-top: 12px; border: 1px solid #DADDDD; border-radius: 8px; padding: 12px; }
+#result h2 { margin: 0 0 8px; font-size: 17px; }
+#result p { margin: 6px 0; font-size: 13px; line-height: 18px; }
+#result .decision { font-weight: 700; }
+#result a { color: #002994; overflow-wrap: anywhere; }
+#result .marketplace-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+#result .marketplace-links a { display: inline-flex; min-height: 32px; align-items: center; }

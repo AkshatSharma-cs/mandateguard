@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "MandateGuard Companion",
+  "version": "0.1.0",
+  "description": "Check a product listing against an active MandateGuard mandate.",
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://localhost:3000/*"],
+  "background": { "service_worker": "service-worker.js" },
+  "action": {
+    "default_title": "Check listing with MandateGuard",
+    "default_popup": "popup.html"
+  }
+}
