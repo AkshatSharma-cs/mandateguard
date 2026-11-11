@@ -1,7 +1,7 @@
 // server/src/routes/mandates.js
 import { Router } from 'express';
 import { z } from 'zod';
-import { getMandate, saveMandate } from '../db.js';
+import { getMandate, listMandates, saveMandate } from '../db.js';
 import { append } from '../audit.js';
 import { parseInstruction, buildMandate } from '../llm/mandateParser.js';
 import { getMerchants } from '../catalogue/index.js';
@@ -21,12 +21,17 @@ function validate(schema, value) {
 const idParams = z.object({ id: z.string().min(1).max(128) }).strict();
 
 const router = Router();
+router.get('/active', asyncHandler(async (req, res) => {
+  validate(z.object({}).strict(), req.query);
+  return res.json({ mandates: listMandates({ status: 'active' }) });
+}));
 router.post('/parse', asyncHandler(async (req, res) => {
   const body = validate(z.object({ instruction: z.string().trim().min(1).max(10000) }).strict(), req.body);
   let built;
   let parserNotes;
+  let parsedResult;
   try {
-    const parsedResult = await parseInstruction(body.instruction);
+    parsedResult = await parseInstruction(body.instruction);
     parserNotes = parsedResult.notes;
     built = buildMandate(parsedResult.parsed, {
       merchants: getMerchants(), now: new Date(), owner_id: 'local-user', instruction: body.instruction,
@@ -34,13 +39,14 @@ router.post('/parse', asyncHandler(async (req, res) => {
   } catch (cause) {
     const error = new Error(cause?.code === 'PARSE_ERROR' ? cause.message : 'Mandate parsing failed');
     error.status = cause?.code === 'PARSE_ERROR' ? 422 : 503;
-    error.code = cause?.code === 'PARSE_ERROR' ? 'INVALID_INSTRUCTION' : 'LLM_UNAVAILABLE';
+    error.code = cause?.code === 'PARSE_ERROR' ? 'PARSE_FAILED' : 'LLM_UNAVAILABLE';
     throw error;
   }
   const { mandate, notes } = built;
+  mandate.parsed_from = parsedResult.parsed_from;
   saveMandate(mandate);
   append({ actor: 'user', event_type: 'MANDATE_PROPOSED', mandate_id: mandate.mandate_id, payload: { version: mandate.version } });
-  return res.status(201).json({ mandate, notes: [...parserNotes, ...notes] });
+  return res.status(201).json({ mandate, notes: [...parserNotes, ...notes], parsed_from: parsedResult.parsed_from });
 }));
 router.post('/:id/confirm', asyncHandler(async (req, res) => {
   const { id } = validate(idParams, req.params);
@@ -48,7 +54,7 @@ router.post('/:id/confirm', asyncHandler(async (req, res) => {
   const mandate = getMandate(id);
   if (!mandate) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Mandate not found' } });
   if (mandate.status !== 'pending_confirmation') return res.status(409).json({ error: { code: 'INVALID_MANDATE_STATE', message: 'Only a pending mandate can be confirmed' } });
-  const active = { ...mandate, status: 'active', confirmed_at: new Date().toISOString() };
+  const active = { ...mandate, status: 'active', confirmed_at: new Date().toISOString(), confirmed_by: 'user' };
   saveMandate(active);
   append({ actor: 'user', event_type: 'MANDATE_CONFIRMED', mandate_id: id, payload: { version: active.version } });
   return res.json(active);

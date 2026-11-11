@@ -38,6 +38,7 @@ export function createPaymentsRouter({ paypal = defaultPaypal, storage = default
     const trustedCatalogue = new Map([...allProducts].map(([id, product]) => [id, {
       product_id: product.product_id, merchant_id: product.merchant_id, price_cents: product.price_cents,
       currency: product.currency, category: product.category, is_bundle: product.is_bundle,
+      domain: product.domain, first_party: product.first_party === true,
     }]));
     return policy({
       mandate, proposal, catalogue: trustedCatalogue,

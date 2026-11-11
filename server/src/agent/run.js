@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getProducts, getMerchants } from '../catalogue/index.js';
 import { extractListing } from '../llm/extractor.js';
 import { naiveChoose } from '../llm/naiveAgent.js';
-import { listCapturedSkus, saveProposal } from '../db.js';
+import { listCapturedSkus, saveEvaluation, saveProposal } from '../db.js';
 import { append } from '../audit.js';
 
 const canonical = (value) => {
@@ -33,6 +33,31 @@ function trustedProduct(product) {
     product_id: product.product_id, merchant_id: product.merchant_id,
     price_cents: product.price_cents, currency: product.currency,
     category: product.category, is_bundle: product.is_bundle,
+    domain: product.domain, first_party: product.first_party === true,
+  };
+}
+
+function observationFor(product, seller, flags = {}, capturedAt = new Date()) {
+  const domain = String(product.domain ?? 'catalogue.local').toLowerCase();
+  const text = `${product.title}\n${product.description}`;
+  return {
+    observation_id: product.product_id,
+    url: product.url ?? `https://${domain}/products/${encodeURIComponent(product.product_id)}`,
+    domain,
+    source: 'curated',
+    title: product.title,
+    price_cents: product.price_cents,
+    currency: product.currency,
+    seller,
+    sold_by_merchant: product.first_party === true,
+    availability: product.availability ?? 'unknown',
+    image_url: product.image_url ?? null,
+    category_hint: product.category ?? null,
+    bundle_signal: product.is_bundle ?? null,
+    hidden_text_found: Object.values(flags).some(Boolean),
+    text,
+    captured_at: capturedAt.toISOString(),
+    content_hash: createHash('sha256').update(text).digest('hex'),
   };
 }
 
@@ -65,7 +90,9 @@ export async function runProtected({ mandate, now = new Date() }) {
   const instant = now instanceof Date ? now : new Date(now);
   const run_id = randomUUID();
   event('AGENT_RUN_STARTED', mandate, null, { run_id, mode: 'protected' });
-  const products = getProducts().filter((product) => product.category === mandate.item_category);
+  const products = getProducts().filter((product) => mandate.item_category == null
+    ? !Array.isArray(mandate.category_terms) || mandate.category_terms.length === 0 || mandate.category_terms.includes(product.category)
+    : product.category === mandate.item_category);
   const evaluate = await getEvaluate();
   const candidates = [];
   const results = new Map();
@@ -91,6 +118,7 @@ export async function runProtected({ mandate, now = new Date() }) {
       decision: evaluated.decision.decision,
       reasons: evaluated.decision.reasons ?? [], checks: evaluated.decision.checks ?? [],
       extraction: extracted.ok ? extracted.extraction : null,
+      observation: observationFor(product, new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name])).get(product.merchant_id) ?? product.merchant_id, extracted.flags, instant),
     });
     event('LISTING_SANITIZED', mandate, proposedId, { product_id: product.product_id, flags: extracted.flags });
     event('EXTRACTION_DONE', mandate, proposedId, { product_id: product.product_id, ok: extracted.ok });
@@ -99,6 +127,25 @@ export async function runProtected({ mandate, now = new Date() }) {
 
   const allowed = [...results.values()].filter((result) => result.decision.decision === 'ALLOW')
     .sort((a, b) => a.product.price_cents - b.product.price_cents)[0];
+  const allowedAlternativeIds = [];
+  const allowedResults = [...results.values()].filter((result) => result.decision.decision === 'ALLOW');
+  const merchantNames = new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name]));
+  for (const result of allowedResults) {
+    const evaluation_id = proposalId();
+    const candidate = candidates.find((entry) => entry.product_id === result.product.product_id);
+    const created_at = instant.toISOString();
+    const evaluationProposal = {
+      ...buildEvaluationProposal(mandate, result.product, evaluation_id, instant),
+      status: 'ALLOWED',
+      evidence: { extractions: { [result.product.product_id]: result.extraction }, sanitize_flags: result.sanitize_flags,
+        catalogue_hash: createHash('sha256').update(canonical([result.product])).digest('hex'), decision: result.decision, evaluated_at: created_at },
+    };
+    const observation = observationFor(result.product, merchantNames.get(result.product.merchant_id) ?? result.product.merchant_id, result.extracted.flags, instant);
+    candidate.evaluation_id = evaluation_id;
+    allowedAlternativeIds.push(evaluation_id);
+    saveEvaluation({ evaluation_id, mandate_id: mandate.mandate_id, mandate_version: mandate.version, decision: 'ALLOW',
+      observation, proposal: evaluationProposal, created_at, expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString() });
+  }
   let proposal = null;
   if (allowed) {
     const { product, extraction, sanitize_flags, decision } = allowed;
@@ -122,14 +169,16 @@ export async function runProtected({ mandate, now = new Date() }) {
     saveProposal(proposal);
     event('PROPOSAL_CREATED', mandate, id, { source: 'protected', status: 'ALLOWED', total_cents: proposal.total_cents });
   }
-  return { run_id, mode: 'protected', enforced: true, candidates, proposal, naive_reasoning: null };
+  return { run_id, mode: 'protected', enforced: true, candidates, proposal, naive_reasoning: null, allowed_alternative_ids: allowedAlternativeIds };
 }
 
 export async function runNaive({ mandate, now = new Date() }) {
   const instant = now instanceof Date ? now : new Date(now);
   const run_id = randomUUID();
   event('AGENT_RUN_STARTED', mandate, null, { run_id, mode: 'naive' });
-  const products = getProducts();
+  const products = getProducts().filter((product) => mandate.item_category == null
+    ? !Array.isArray(mandate.category_terms) || mandate.category_terms.length === 0 || mandate.category_terms.includes(product.category)
+    : product.category === mandate.item_category);
   const merchants = new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name]));
   const modelProducts = products.map((product) => ({ ...product, merchant_name: merchants.get(product.merchant_id) }));
   const choice = await naiveChoose({ instruction: mandate.original_instruction ?? '', products: modelProducts, sample_id: `naive:${run_id}` });
@@ -181,7 +230,8 @@ export async function runNaive({ mandate, now = new Date() }) {
     const product = byId.get(item.sku);
     candidates.push({ product_id: item.sku, decision: would_have_been.decision,
       reasons: would_have_been.reasons ?? [], checks: would_have_been.checks ?? [],
-      extraction: displayExtractions[item.sku] ?? null });
+      extraction: displayExtractions[item.sku] ?? null,
+      ...(product ? { observation: observationFor(product, merchants.get(product.merchant_id) ?? product.merchant_id, flagsMap[item.sku], instant) } : {}) });
     event('POLICY_DECISION', mandate, proposal_id, { product_id: item.sku, decision: would_have_been });
   }
   event('PROPOSAL_CREATED', mandate, proposal_id, { source: 'naive', status: 'DRAFT', would_have_been: would_have_been.decision });

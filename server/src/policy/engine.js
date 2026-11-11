@@ -35,7 +35,8 @@ export function evaluate(args = {}) {
   const review = (code, source, message) => add(code, false, source, 'REVIEW', message);
   const instant = now instanceof Date && Number.isFinite(now.getTime()) ? now.getTime() : NaN;
   const mandateOk = isObject(mandate) && isInt(mandate.version) && mandate.version >= 1 && typeof mandate.mandate_id === 'string'
-    && ['mouse', 'keyboard', 'headset', 'monitor', 'webcam'].includes(mandate.item_category)
+    && (['mouse', 'keyboard', 'headset', 'monitor', 'webcam'].includes(mandate.item_category)
+      || (mandate.item_category === null && (mandate.item_query === null || typeof mandate.item_query === 'string')))
     && mandate.currency === 'USD' && typeof mandate.status === 'string'
     && Array.isArray(mandate.allowed_merchant_ids) && mandate.allowed_merchant_ids.every((id) => typeof id === 'string')
     && isInt(mandate.max_unit_price_cents) && mandate.max_unit_price_cents >= 0
@@ -81,7 +82,7 @@ export function evaluate(args = {}) {
     }
     const validProduct = isObject(product) && product.product_id === item.sku
       && typeof product.merchant_id === 'string' && isInt(product.price_cents) && product.price_cents >= 0
-      && typeof product.currency === 'string' && ['mouse', 'keyboard', 'headset', 'monitor', 'webcam'].includes(product.category)
+      && typeof product.currency === 'string' && ['mouse', 'keyboard', 'headset', 'monitor', 'webcam', 'other', 'unclear'].includes(product.category)
       && (product.is_bundle === true || product.is_bundle === false || product.is_bundle === null);
     if (!validProduct) {
       block('PRODUCT_UNKNOWN', 'Trusted catalogue product is malformed');
@@ -96,7 +97,14 @@ export function evaluate(args = {}) {
     else computedTotal += line;
     add('PRICE_TAMPERED', item.unit_price_cents === product.price_cents, 'deterministic', 'BLOCK', 'Item price differs from trusted catalogue');
     add('CURRENCY_MISMATCH', item.quantity > 0 && proposal.currency === product.currency, 'deterministic', 'BLOCK', 'Product currency differs from proposal');
-    add('MERCHANT_NOT_ALLOWED', Array.isArray(mandate.allowed_merchant_ids) && mandate.allowed_merchant_ids.includes(product.merchant_id), 'deterministic', 'BLOCK', 'Merchant is not allowed by mandate');
+    const merchantListOpen = ['profile', 'task'].includes(mandate.kind) && Array.isArray(mandate.allowed_merchant_ids) && mandate.allowed_merchant_ids.length === 0;
+    add('MERCHANT_NOT_ALLOWED', !Array.isArray(mandate.allowed_merchant_ids) || merchantListOpen || mandate.allowed_merchant_ids.includes(product.merchant_id), 'deterministic', 'BLOCK', 'Merchant is not allowed by mandate');
+    const domainAllowed = !Array.isArray(mandate.allowed_domains) || mandate.allowed_domains.length === 0
+      || (typeof product.domain === 'string' && mandate.allowed_domains.some((allowed) =>
+        typeof allowed === 'string'
+        && (product.domain === allowed || product.domain.endsWith(`.${allowed}`))));
+    add('DOMAIN_NOT_ALLOWED', domainAllowed, 'deterministic', 'BLOCK', 'Product domain is not allowed by mandate');
+    if (mandate.require_first_party === true) add('FIRST_PARTY_REQUIRED', product.first_party === true, 'deterministic', 'BLOCK', 'Mandate requires a first-party listing');
     add('OVER_BUDGET', isInt(mandate.max_unit_price_cents) && item.unit_price_cents <= mandate.max_unit_price_cents, 'deterministic', 'BLOCK', 'Unit price exceeds mandate limit');
     add('QUANTITY_EXCEEDED', isInt(mandate.quantity_max) && item.quantity <= mandate.quantity_max, 'deterministic', 'BLOCK', 'Quantity exceeds mandate limit');
     add('BUNDLE_NOT_ALLOWED', product.is_bundle !== true || mandate.allow_bundles === true, 'deterministic', 'BLOCK', 'Bundles are not allowed');
@@ -119,7 +127,7 @@ export function evaluate(args = {}) {
     }
     if (extraction.claims_bundle && product.is_bundle === false && mandate.allow_bundles !== true) review('BUNDLE_TEXT_CONFLICT', 'ai', 'Listing text claims a bundle but the catalogue does not');
     if (extraction.claimed_price_cents !== null && extraction.claimed_price_cents !== product.price_cents) review('TEXT_PRICE_CONFLICT', 'ai', 'Listing text price differs from catalogue price');
-    if (extraction.category_label !== mandate.item_category) review('CATEGORY_MISMATCH', 'ai', 'Listing category differs from mandate category');
+    if (mandate.item_query !== null && extraction.category_label !== mandate.item_category) review('CATEGORY_MISMATCH', 'ai', 'Listing category differs from mandate category');
     if (extraction.urgency_pressure) review('URGENCY_PRESSURE', 'ai', 'Listing uses urgency pressure');
     if (confidence < 0.5) review('LOW_CONFIDENCE', 'ai', 'Listing extraction confidence is low');
   }

@@ -107,6 +107,15 @@ test('confidence 0.5 is the injection boundary and multiple failures aggregate',
   assert.ok(codes(evaluate(multiple)).includes('CURRENCY_MISMATCH'));
 });
 
+test('profile evaluations with a null item_query skip CATEGORY_MISMATCH', () => {
+  const value = input();
+  value.mandate.item_query = null;
+  value.extractions.get('p1').category_label = 'keyboard';
+  const result = evaluate(value);
+  assert.equal(result.decision, 'ALLOW');
+  assert.equal(codes(result).includes('CATEGORY_MISMATCH'), false);
+});
+
 test('invalid data is blocked without throwing', () => {
   for (const bad of [null, {}, { ...input(), now: 'not a date' }, { ...input(), proposal: { ...input().proposal, items: [{ sku: 'p1', quantity: -1, unit_price_cents: 1 }] } }]) {
     assert.doesNotThrow(() => evaluate(bad));

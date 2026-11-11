@@ -8,12 +8,18 @@ const schema = z.object({
   LLM_MODE: z.enum(['live', 'record', 'replay']).default('replay'),
   LLM_PROVIDER: z.enum(['gemini', 'anthropic']).default('gemini'),
   LLM_API_KEY: z.string().optional(),
-  LLM_MODEL: z.string().default(''),
+  // Empty values in an existing .env file should not produce a malformed provider URL.
+  LLM_MODEL: z.string().trim().default('gemini-3.8-flash').transform((value) => value || 'gemini-3.8-flash'),
   PAYPAL_CLIENT_ID: z.string().default(''),
   PAYPAL_CLIENT_SECRET: z.string().default(''),
   PAYPAL_BASE_URL: z.string().url().default('https://api-m.sandbox.paypal.com'),
   PAYPAL_BUSINESS_EMAIL: z.string().default(''),
   APP_BASE_URL: z.string().url().default('http://localhost:3000'),
+  CHANNEL3_API_KEY: z.string().default(''),
+  CHANNEL3_API_URL: z.string().url().default('https://api.trychannel3.com'),
+  CHANNEL3_REGION: z.string().min(2).max(8).default('US'),
+  INCLUDE_DEMO_LISTINGS: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  MAX_LLM_CALLS_PER_RUN: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 const parsed = schema.safeParse(process.env);

@@ -1,0 +1,342 @@
+# docs/openapi.yaml
+openapi: 3.1.0
+info:
+  title: MandateGuard API
+  version: 3.0.0
+  description: >-
+    V3 profiles and task evaluation. The same routes are mounted under /v1 and /api/v1.
+servers:
+  - url: http://localhost:3000/v1
+tags:
+  - name: Profiles
+  - name: Mandates
+  - name: Evaluation
+paths:
+  /profiles:
+    get:
+      tags: [Profiles]
+      summary: List profiles for the current owner
+      responses:
+        '200':
+          description: Profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items: { $ref: '#/components/schemas/Profile' }
+    post:
+      tags: [Profiles]
+      summary: Create a pending profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [limits]
+                  properties:
+                    limits: { $ref: '#/components/schemas/ProfileLimits' }
+                - type: object
+                  additionalProperties: false
+                  required: [instruction]
+                  properties:
+                    instruction: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        '201':
+          description: Created profile, awaiting user confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile: { $ref: '#/components/schemas/Profile' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/InvalidProfile' }
+  /profiles/{id}/confirm:
+    post:
+      tags: [Profiles]
+      summary: Confirm a pending profile
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Active, user-confirmed profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile: { $ref: '#/components/schemas/Profile' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /profiles/{id}/default:
+    post:
+      tags: [Profiles]
+      summary: Make a confirmed profile the owner's default
+      description: Clears any previous default profile for that owner atomically.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The sole default profile for the owner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile: { $ref: '#/components/schemas/Profile' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /mandates:
+    post:
+      tags: [Mandates]
+      summary: Create a task mandate
+      description: Uses the supplied profile or the owner's active default. A task inside profile limits auto-activates; an expansion stays pending with notes and exceeded keys.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                instruction: { type: string, maxLength: 10000, default: '' }
+                profile_id: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '201':
+          description: Derived task mandate
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mandate, notes, within_profile, exceeded]
+                properties:
+                  mandate: { $ref: '#/components/schemas/Mandate' }
+                  notes: { type: array, items: { type: string } }
+                  within_profile: { type: [boolean, 'null'] }
+                  exceeded: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/InvalidProfile' }
+  /evaluate:
+    post:
+      tags: [Evaluation]
+      summary: Evaluate one product observation
+      description: If mandate_id and profile_id are omitted, uses the active default profile. Alternatives default to true and are bounded to 12 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [observation]
+              properties:
+                mandate_id: { type: string }
+                profile_id: { type: string }
+                alternatives: { type: boolean, default: true }
+                observation: { $ref: '#/components/schemas/ProductObservation' }
+      responses:
+        '200':
+          description: Decision and up to three allowed alternatives
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvaluateResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: No usable profile or mandate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { error: { code: NO_PREFERENCES, message: Confirm a profile or provide an active mandate before evaluation. } }
+  /proposals:
+    post:
+      tags: [Evaluation]
+      summary: Create a protected proposal from an allowed evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [evaluation_id]
+              properties:
+                evaluation_id: { type: string }
+      responses:
+        '201':
+          description: Created protected proposal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proposal: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /search:
+    post:
+      tags: [Evaluation]
+      summary: Search for policy-allowed alternatives under the default profile
+      description: Searches within a 12 second budget and returns no more than three allowed evaluations. An optional observation lets the server exclude its title and domain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 300 }
+                observation: { $ref: '#/components/schemas/ProductObservation' }
+      responses:
+        '200':
+          description: Allowed alternatives, empty if search fails or times out
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [alternatives]
+                properties:
+                  alternatives:
+                    type: array
+                    maxItems: 3
+                    items:
+                      type: object
+                      required: [evaluation_id, observation, decision, reasons]
+                      properties:
+                        evaluation_id: { type: string }
+                        observation: { $ref: '#/components/schemas/ProductObservation' }
+                        decision: { const: ALLOW }
+                        reasons: { type: array, maxItems: 0 }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+  schemas:
+    ProfileLimits:
+      type: object
+      additionalProperties: false
+      required: [max_total, allow_bundles, allow_addons, require_first_party, allowed_domains]
+      properties:
+        max_total: { type: string, pattern: '^\d+\.\d{2}$', description: Strict USD amount, at most 100000 cents. }
+        allow_bundles: { type: boolean }
+        allow_addons: { type: boolean }
+        require_first_party: { type: boolean }
+        allowed_domains:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, format: hostname, description: Lower-case registrable domain, not a subdomain. }
+    Mandate:
+      type: object
+      required: [mandate_id, kind, parent_profile_id, is_default, confirmed_by, item_query, category_terms, version, status, max_total_cents, allow_bundles, allow_addons, require_first_party, allowed_domains]
+      properties:
+        mandate_id: { type: string }
+        kind: { type: string, enum: [task, profile] }
+        parent_profile_id: { type: [string, 'null'] }
+        is_default: { type: boolean }
+        confirmed_by: { type: [string, 'null'], description: user or profile:<id> }
+        item_query: { type: [string, 'null'] }
+        category_terms: { type: array, items: { type: string } }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending_confirmation, active, revoked] }
+        max_total_cents: { type: integer, minimum: 0, maximum: 100000 }
+        allow_bundles: { type: boolean }
+        allow_addons: { type: boolean }
+        require_first_party: { type: boolean }
+        allowed_domains: { type: array, items: { type: string } }
+    Profile:
+      allOf:
+        - $ref: '#/components/schemas/Mandate'
+        - type: object
+          properties:
+            kind: { const: profile }
+            item_query: { type: 'null' }
+            is_default: { type: boolean }
+    ProductObservation:
+      type: object
+      additionalProperties: false
+      required: [observation_id, url, domain, source, title, price_cents, currency, seller, sold_by_merchant, availability, image_url, category_hint, bundle_signal, hidden_text_found, text, captured_at, content_hash]
+      properties:
+        observation_id: { type: string }
+        url: { type: string, format: uri }
+        domain: { type: string, format: hostname }
+        source: { type: string, enum: [curated, channel3, page] }
+        title: { type: string }
+        price_cents: { type: integer, minimum: 0 }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+        seller: { type: string }
+        sold_by_merchant: { type: boolean }
+        availability: { type: string }
+        image_url: { type: [string, 'null'], format: uri }
+        category_hint: { type: [string, 'null'] }
+        bundle_signal: { type: [boolean, 'null'] }
+        hidden_text_found: { type: boolean }
+        text: { type: string, maxLength: 4000 }
+        captured_at: { type: string, format: date-time }
+        content_hash: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    EvaluateResult:
+      type: object
+      required: [evaluation_id, decision, reasons, checks, observation, expires_at, alternatives]
+      properties:
+        evaluation_id: { type: string }
+        decision: { type: string, enum: [ALLOW, REVIEW, BLOCK] }
+        reasons: { type: array, items: { type: object } }
+        checks: { type: array, items: { type: object } }
+        observation: { $ref: '#/components/schemas/ProductObservation' }
+        expires_at: { type: string, format: date-time }
+        alternatives:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            required: [evaluation_id, observation, decision, reasons]
+            properties:
+              evaluation_id: { type: string }
+              observation: { $ref: '#/components/schemas/ProductObservation' }
+              decision: { const: ALLOW }
+              reasons: { type: array, maxItems: 0 }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request data
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    InvalidProfile:
+      description: Profile data failed validation or parsing
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Resource is inactive, stale, expired, or in an invalid state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }

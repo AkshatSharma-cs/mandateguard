@@ -26,7 +26,7 @@ export function validateExtraction(value) {
   return extractionSchema.safeParse(value);
 }
 
-export async function extractListing(product) {
+export async function extractListing(product, { signal, beforeCall } = {}) {
   const sanitized = sanitize(`${product?.title ?? ''}\n${product?.description ?? ''}`);
   const cleanText = sanitized.clean_text.slice(0, 4000);
   const key = createHash('sha256').update(cleanText).digest('hex');
@@ -36,7 +36,15 @@ export async function extractListing(product) {
   let result;
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const output = await llmJson({ system, user, temperature: 0, sample_id: `listing:${key}${attempt ? ':retry' : ''}` });
+      if (beforeCall && !beforeCall()) {
+        result = { ok: false, error: 'LLM call budget exhausted', flags, budget_exhausted: true };
+        break;
+      }
+      if (signal?.aborted) {
+        result = { ok: false, error: 'Extraction cancelled', flags, cancelled: true };
+        break;
+      }
+      const output = await llmJson({ system, user, temperature: 0, sample_id: `listing:${key}${attempt ? ':retry' : ''}`, signal });
       const validated = validateExtraction(output);
       if (validated.success) {
         result = { ok: true, extraction: validated.data, flags };
@@ -48,6 +56,6 @@ export async function extractListing(product) {
     result = { ok: false, error: error?.code === 'REPLAY_MISS' ? 'No recorded extraction available' : 'Extraction failed', flags };
   }
   const { flags: _flags, ...cached } = result;
-  cache.set(key, cached);
+  if (!result.cancelled && !result.budget_exhausted) cache.set(key, cached);
   return result;
 }

@@ -14,3 +14,5 @@ export function getProduct(id) {
 export function buildCatalogueMap() {
   return new Map(products.map((product) => [product.product_id, { ...product }]));
 }
+
+export { searchProducts, getDiscoveryStatus } from './discovery.js';

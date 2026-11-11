@@ -36,7 +36,11 @@ async function requestGemini({ system, user, temperature, model, signal }) {
     headers: { 'content-type': 'application/json', 'x-goog-api-key': config.LLM_API_KEY },
     body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] },], generationConfig: { temperature, responseMimeType: 'application/json' } }),
   });
-  if (!response.ok) throw new Error(`Gemini request failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`Gemini request failed with HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   const body = await response.json();
   return parseJson(body.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join(''));
 }
@@ -47,12 +51,16 @@ async function requestAnthropic({ system, user, temperature, model, signal }) {
     headers: { 'content-type': 'application/json', 'x-api-key': config.LLM_API_KEY, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model, max_tokens: 2048, temperature, system: `${system}\n\nReturn only one valid JSON object with no markdown fences.`, messages: [{ role: 'user', content: user }] }),
   });
-  if (!response.ok) throw new Error(`Anthropic request failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`Anthropic request failed with HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   const body = await response.json();
   return parseJson(body.content?.filter((part) => part.type === 'text').map((part) => part.text).join(''));
 }
 
-export async function llmJson({ system, user, temperature = 0, sample_id = '' }) {
+export async function llmJson({ system, user, temperature = 0, sample_id = '', signal }) {
   const provider = config.LLM_PROVIDER;
   const model = config.LLM_MODEL;
   const id = fixtureId(provider, model, system, user, temperature, sample_id);
@@ -67,9 +75,23 @@ export async function llmJson({ system, user, temperature = 0, sample_id = '' })
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     const args = { system, user, temperature, model, signal: controller.signal };
-    const result = provider === 'gemini' ? await requestGemini(args) : await requestAnthropic(args);
+    const request = provider === 'gemini' ? requestGemini : requestAnthropic;
+    let result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        result = await request(args);
+        break;
+      } catch (error) {
+        const transient = [429, 500, 502, 503, 504].includes(error?.status);
+        if (attempt > 0 || !transient || controller.signal.aborted) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
     if (config.LLM_MODE === 'record') {
       await mkdir(fixtureDirectory, { recursive: true });
       await writeFile(fixture, `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' }).catch(async (error) => {
@@ -80,5 +102,18 @@ export async function llmJson({ system, user, temperature = 0, sample_id = '' })
     return result;
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
   }
+}
+
+let pingCache = { at: 0, value: null, promise: null };
+export async function pingLLM() {
+  if (config.LLM_MODE === 'replay') return null;
+  if (pingCache.value !== null && Date.now() - pingCache.at < 60_000) return pingCache.value;
+  if (pingCache.promise) return pingCache.promise;
+  pingCache.promise = llmJson({ system: 'Return only JSON: {"ok":true}.', user: 'ping', temperature: 0, sample_id: 'status-ping' })
+    .then((value) => value?.ok === true)
+    .catch(() => false)
+    .then((value) => { pingCache = { at: Date.now(), value, promise: null }; return value; });
+  return pingCache.promise;
 }
