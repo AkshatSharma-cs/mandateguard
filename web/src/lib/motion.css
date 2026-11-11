@@ -1,0 +1,10 @@
+.desktop-nav-link { position: relative; isolation: isolate; }
+.nav-highlight { position: absolute; z-index: -1; inset: 0; border-radius: var(--radius-pill); background: var(--color-button-secondary); }
+.nav-label { position: relative; }
+.hero-carousel-slide { min-height: 260px; }
+.hero-dots { display: flex; justify-content: center; gap: 12px; margin-top: 16px; }
+.hero-dot { width: 32px; height: 32px; display: inline-grid; place-items: center; border: 1px solid var(--color-line-strong); border-radius: var(--radius-pill); background: var(--color-paper); cursor: pointer; }
+.hero-dot[aria-current="true"] { background: var(--color-brand-dark); }
+.scenario-tab-label { position: relative; z-index: 1; }
+.scenario-highlight { position: absolute; inset: 0; z-index: 0; border-radius: var(--radius-pill); background: var(--color-button-secondary); }
+.scenario-tabs button[aria-selected="true"] { background: transparent; }

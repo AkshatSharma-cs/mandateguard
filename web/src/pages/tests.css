@@ -1,0 +1,12 @@
+.tests-page { min-height: calc(100vh - 320px); padding-block: 64px; }
+.tests-heading h1 { margin: 0; }
+.tests-intro { margin: 16px 0 32px; }
+.tests-loading { display: grid; gap: 16px; }
+.tests-error { display: flex; align-items: center; gap: 16px; color: var(--color-block-fg); }
+.tests-error p { flex: 1; margin: 0; }
+.tests-aggregate { margin-bottom: 24px; }
+.tests-cases { margin-bottom: 24px; }
+.tests-table-wrap { overflow-x: auto; }
+.tests-table-wrap .data-table { min-width: 880px; }
+.tests-settings { max-width: 640px; }
+@media (max-width: 767px) { .tests-page { padding-block: 48px; } }

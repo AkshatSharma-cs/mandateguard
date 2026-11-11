@@ -1,0 +1,47 @@
+<!-- public/checkout-harness.html -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>MandateGuard checkout harness</title></head>
+<body>
+  <h1>Checkout harness</h1>
+  <label>Protected proposal ID <input id="proposal-id" autocomplete="off"></label>
+  <button id="load-buttons" type="button">Load PayPal buttons</button>
+  <div id="buttons"></div>
+  <pre id="out"></pre>
+  <script>
+    const out = document.getElementById('out');
+    const show = (value) => { out.textContent = JSON.stringify(value, null, 2); };
+    document.getElementById('load-buttons').addEventListener('click', async () => {
+      const proposalId = document.getElementById('proposal-id').value.trim();
+      if (!proposalId) { show({ error: 'Enter a proposal id' }); return; }
+      const configResponse = await fetch('/api/config/public');
+      const config = await configResponse.json();
+      if (!configResponse.ok || !config.paypal_client_id) { show(config); return; }
+      const sdk = document.createElement('script');
+      sdk.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(config.paypal_client_id) +
+        '&currency=' + encodeURIComponent(config.currency || 'USD') + '&intent=capture';
+      sdk.onload = () => {
+        document.getElementById('buttons').replaceChildren();
+        paypal.Buttons({
+          createOrder: async () => {
+            const response = await fetch('/api/proposals/' + encodeURIComponent(proposalId) + '/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+            const result = await response.json();
+            if (!response.ok) { show(result); throw new Error(result.error?.message || 'Checkout failed'); }
+            return result.paypal_order_id;
+          },
+          onApprove: async (data) => {
+            const response = await fetch('/api/proposals/' + encodeURIComponent(proposalId) + '/capture', {
+              method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ order_id: data.orderID }),
+            });
+            show(await response.json());
+          },
+          onCancel: (data) => show({ cancelled: true, data }),
+          onError: (error) => show({ error: String(error) }),
+        }).render('#buttons');
+      };
+      sdk.onerror = () => show({ error: 'Could not load PayPal JavaScript SDK' });
+      document.head.appendChild(sdk);
+    });
+  </script>
+</body>
+</html>
