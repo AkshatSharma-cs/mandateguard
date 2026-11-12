@@ -1,77 +1,72 @@
 # MandateGuard
 
-MandateGuard is a permission-aware shopping companion. It searches live marketplace offers from a buyer's task and confirmed preferences, then checks each listing against those limits before presenting it. The buyer opens the real retailer listing to purchase; MandateGuard does not place orders on external stores.
+MandateGuard is an authorization gateway for AI shopping agents: **AI proposes. MandateGuard validates. You authorize. PayPal executes.** It checks proposed purchases against shopper-confirmed limits, treats seller-provided text as untrusted, and verifies the exact PayPal Sandbox order before capture.
 
-## Problem
+## Why it exists
 
-Shopping agents read seller-controlled listing text. That text can contain instructions that try to change a budget, claim buyer approval, add products, or pressure an agent to act quickly. MandateGuard treats listing descriptions as untrusted data and keeps the buyer's mandate separate from the quarantined extractor.
+Shopping agents can misunderstand a request, be manipulated by text embedded in a product listing, or propose a cart that exceeds the shopper's limits. MandateGuard inserts a reviewable policy boundary between an agent's proposal and payment.
 
-## Shopping flow
-
-Create and confirm a preference profile with spending, bundle, add-on, seller, and approved-domain limits. Describe a task in the Console. The backend searches Channel3 using the task and approved domains, analyzes the returned store listings as untrusted text, and applies the deterministic policy engine. Allowed offers link to their retailer pages. Blocked offers stay visible with reasons and any allowed alternatives. The local curated catalogue and PayPal sandbox harness remain available only for explicitly enabled/demo catalogue flows.
-
-## Architecture
+## How it works
 
 ```text
-Buyer instruction
-      |
-      v
-Pending mandate -- buyer confirms --> Active mandate
-      |
-      +--> Quarantined listing extractor (untrusted text only)
-                     |
-                     v
-             Deterministic policy engine <--- trusted catalogue + mandate
-                     |
-              Allowed protected proposal
-                     |
-       PayPal order + buyer approval (JS SDK)
-                     |
-        Server-side order verification
-                     |
-          Atomic capture reservation
-                     |
-              Append-only audit chain
+Shopper confirms limits -> Agent proposes -> MandateGuard evaluates
+                                             |
+                         Audit trail <- Decision and evidence
+                                             |
+                       Shopper approves PayPal Sandbox order
+                                             |
+                          Server verifies order before capture
 ```
 
-## Invariants
+Shoppers can use standing preferences or create a task-specific mandate. Listing extraction runs in an isolated, no-tools model step; extracted seller instructions are evidence, never authority. A deterministic policy engine checks price, seller/domain, category, quantity, bundles, add-ons, currency, freshness, and duplicates. The buyer reviews the result before any controlled checkout.
 
-1. AI cannot create, modify, or expand a mandate without explicit buyer confirmation.
-2. Seller text is confined to the extractor and never becomes trusted instructions or payment input.
-3. AI checks can flag or reject a proposal; they cannot authorize it.
-4. Deterministic policy and buyer approval authorize payment.
-5. The backend verifies the exact PayPal order and uses an atomic capture transition.
-6. Consequential steps are appended to the audit chain.
-7. Errors, timeouts, and invalid outputs fail closed.
+## Checkout boundary
 
-## Tools and APIs
+The integrated checkout uses PayPal Sandbox only. Demo-store orders are sandbox orders and do not represent a real purchase or shipment. An allowed external listing can also create a clearly disclosed sandbox simulation: MandateGuard does not buy from that retailer and no real money moves. **Open at store** is a separate handoff; MandateGuard does not control or verify an external retailer's checkout.
 
-The server uses Node.js ESM, Express, better-sqlite3, Zod, dotenv, and native `fetch`. The quarantined extractor uses the Gemini or Anthropic REST API in JSON mode; replay mode reads recorded fixtures without network access. PayPal integration obtains an OAuth token, creates and reads Orders v2 orders, captures approved orders server-side, and uses the PayPal JavaScript SDK only for the buyer approval step. API credentials stay in `.env` and are never included in responses or logs.
+## Features
 
-## Setup
+- Confirmed standing profiles and task mandates with explicit limits.
+- Channel3 marketplace discovery, with optional curated demo listings.
+- Quarantined listing analysis and deterministic policy decisions with reasons and rule evidence.
+- Up to three allowed alternatives evaluated under the same mandate.
+- Manifest V3 browser companion for checking a product page against the default profile.
+- PayPal Sandbox Orders API, PayPal JavaScript SDK approval, and server-side order verification before capture.
+- Append-only, hash-chained audit events and replayable security demonstrations.
 
-1. Clone the repository and run `npm install`.
-2. Copy `.env.example` to `.env` and set `LLM_MODE=live`, `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` for listing analysis and mandate parsing. Replay mode is only usable when matching fixtures exist.
-3. Set `CHANNEL3_API_KEY` to enable real marketplace discovery. `CHANNEL3_REGION` selects the search market. Demo listings are disabled unless `INCLUDE_DEMO_LISTINGS=true`; if live search is unavailable, the agent returns no listings instead of silently showing demo products. The server uses Channel3's `POST /v1/search` endpoint and its retailer offer URLs. [Channel3 API guide](https://github.com/channel3-ai/skills/blob/main/skills/channel3-api/SKILL.md).
-4. Configure PayPal sandbox credentials (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_BUSINESS_EMAIL`) only if you want to use the sample catalogue's sandbox checkout. Live marketplace listings open on the retailer site; MandateGuard cannot inspect or control that site's checkout and does not capture those purchases.
-5. Set `web/.env.local` to `VITE_USE_MOCK=false` for the backend-backed UI, then run `npm run dev`. The UI is at `http://localhost:5173/app/`, and the API is at `http://localhost:3000`.
-6. Run `npm test`; use `scripts/smoke.sh` for the mandate and agent API flow.
+## Technology
 
-The API currently uses a local owner identity and has no API-key authentication middleware. Keep it bound to your development machine; do not expose it publicly.
+Node.js 20+, Express, better-sqlite3, Zod, React 19, TypeScript, Vite, Tailwind CSS v4, Motion, and a Manifest V3 browser extension in JavaScript. LLM REST adapters support Gemini and Anthropic, as well as fixture replay. PayPal uses OAuth 2.0 and Orders v2.
+
+## Run locally
+
+1. Install dependencies: `npm install`.
+2. Copy `.env.example` to `.env`. `LLM_MODE=replay` is the default; replay needs matching fixtures. Configure an LLM provider and key for live parsing and extraction.
+3. For live marketplace search, set `CHANNEL3_API_KEY`. Set `INCLUDE_DEMO_LISTINGS=true` only when you want curated demo listings available.
+4. To exercise payment, configure a PayPal developer Sandbox app and buyer account, then set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_BUSINESS_EMAIL`.
+5. Build the web console with `npm run build:demo`, then run `npm start`; or run backend and Vite together with `npm run dev`.
+6. Open `http://localhost:3000/app/` after the build, or `http://localhost:5173/app/` in development. Create and confirm a profile before running a protected search. To allow the sample demo-store product, include `acme.localhost` in approved websites.
+
+The local API uses a shared `local-user` identity and does not issue or validate API keys. Keep it on a trusted development machine; do not expose it publicly. `MG_API_KEY` shown in examples is for a deployment that supplies its own authentication layer.
 
 ## Browser companion
 
-Load `extension/` unpacked from `chrome://extensions` with Developer mode enabled. It calls the local API at `http://localhost:3000`; its current permission set does not read page content automatically, so enter the displayed price and description in the popup. See [extension/README.md](extension/README.md).
+Load the `extension/` directory unpacked from `chrome://extensions` or `edge://extensions` with Developer mode enabled. The extension reads product details from the active tab only after you open it and review the extracted fields. It does not submit purchases; it opens MandateGuard for review and sandbox approval. See [extension/README.md](extension/README.md).
 
-## Tests and attack suite
+## Tests and security suite
 
-Run the tests with `npm test`. Reproduce the recorded attack suite without an API key with `LLM_MODE=replay npm run attacks`; the fixtures under `server/fixtures/llm` are required for a complete replay. The suite writes per-case output to `attacks/RESULTS.md` and `attacks/results.json`.
+Run automated tests with `npm test`. Run the attack demonstration in replay mode with `LLM_MODE=replay npm run attacks`; matching fixtures are needed for meaningful replay coverage. Missing fixtures fail closed. See [attacks/RESULTS.md](attacks/RESULTS.md) for the recorded run and its settings.
 
-When required fixtures are absent, extraction fails closed and the generated report records those mismatches; that run is not a complete model evaluation.
+## API and project docs
+
+- [Merchant integration quickstart](docs/INTEGRATION.md)
+- [API reference](docs/API.md) and [OpenAPI contract](docs/openapi.yaml)
+- [Devpost project write-up](docs/DEVPOST.md)
+- [Demo video outline](docs/VIDEO-SCRIPT.md)
 
 ## Limitations
 
-Live discovery depends on Channel3 availability, retailer coverage, and the configured region. MandateGuard evaluates the listing information returned by discovery, but external prices and stock can change after the result is shown. It cannot enforce limits at an external retailer's checkout; the user completes that purchase on the retailer's own site. The API has no authentication middleware and the local owner identity is shared, so keep it local. PayPal sandbox checkout applies only to the sample catalogue and is not the checkout path for live retailer offers. The attack suite is a small demonstration, not a general security evaluation.
+The integrated payment path is Sandbox only. Marketplace coverage depends on Channel3 and retailer offers, and external price or availability may change. Page evaluation checks what the page claims; it does not control the retailer's checkout. The unprotected comparison agent can vary between runs, and the security suite is demonstrative rather than a general security evaluation. The local API has no customer authentication or identity isolation. Usage-based API pricing is a hypothesis, not a validated business model.
 
 ## License
 
