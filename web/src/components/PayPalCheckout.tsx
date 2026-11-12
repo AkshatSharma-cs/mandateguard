@@ -5,7 +5,7 @@ import { api } from '../api/client';
 type PayPalApproveData = { orderID: string };
 type PayPalButtonsInstance = { render(target: HTMLElement): Promise<void>; close(): Promise<void> | void };
 type PayPalNamespace = { Buttons(options: {
-  style: { layout: 'vertical'; shape: 'pill'; label: 'pay' };
+  style: { layout: 'vertical'; shape: 'pill'; label: 'buynow' };
   createOrder(): Promise<string>;
   onApprove(data: PayPalApproveData): Promise<void>;
   onCancel?(): void;
@@ -68,7 +68,7 @@ export default function PayPalCheckout({ proposalId, disabled = false, busy = fa
     }).then(async () => {
       if (!active || !target.current || !window.paypal) return;
       buttons = window.paypal.Buttons({
-        style: { layout: 'vertical', shape: 'pill', label: 'pay' },
+        style: { layout: 'vertical', shape: 'pill', label: 'buynow' },
         createOrder: async () => {
           const orderId = await createOrderRef.current();
           if (!orderId) throw new Error('The PayPal order could not be created.');

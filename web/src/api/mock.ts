@@ -15,6 +15,7 @@ let nextEventId = 1;
 let auditWrite = Promise.resolve();
 const auditEvents: AuditEvent[] = [];
 const proposalById = new Map<string, Proposal>();
+const observationByEvaluationId = new Map<string, ProductObservation>();
 const orderByProposal = new Map<string, string>();
 const capturedProposalIds = new Set<string>();
 let captureNumber = 1;
@@ -85,7 +86,7 @@ function observationFor(product: Product): ProductObservation {
   const domain = product.domain ?? 'acme.localhost';
   return {
     observation_id: product.product_id, url: product.url ?? `http://${domain}:3000/demo-store/${encodeURIComponent(product.product_id)}.html`,
-    domain, source: 'curated', title: product.title, price_cents: product.price_cents,
+    domain, source: 'curated', checkout_mode: 'gateway', title: product.title, price_cents: product.price_cents,
     currency: product.currency, seller: merchantName(product.merchant_id), sold_by_merchant: true,
     availability: 'unknown', image_url: null, category_hint: product.category, bundle_signal: product.is_bundle,
     hidden_text_found: product.product_id === 'p_a6', text, captured_at: new Date().toISOString(), content_hash: '0'.repeat(64),
@@ -135,6 +136,8 @@ function proposalFor(mandate: Mandate, product: Product, source: Proposal['sourc
     status,
     paypal_order_id: null,
     created_at: new Date().toISOString(),
+    checkout_mode: product.domain?.endsWith('.localhost') ? 'gateway' : 'handoff',
+    ...(product.domain?.endsWith('.localhost') ? {} : { handoff_url: product.url ?? null }),
     ...(source === 'naive' ? { would_have_been: wouldHaveBeen } : {}),
   };
 }
@@ -279,7 +282,10 @@ export const mock = {
       ? currentMandate?.mandate_id === options.mandate_id ? currentMandate : profiles.find(item => item.mandate_id === options.mandate_id)
       : options.profile_id ? profiles.find(item => item.mandate_id === options.profile_id) : profiles.find(item => item.is_default && item.status === 'active');
     if (!mandate || mandate.status !== 'active') throw new ApiError('NO_PREFERENCES', 'Confirm a profile or provide an active mandate before evaluation.', 409);
-    const withinLimit = observation.price_cents <= mandate.max_total_cents;
+    const observedMode = observation.source === 'curated' && observation.domain.endsWith('.localhost') ? 'gateway' as const : 'handoff' as const;
+    observation = { ...observation, checkout_mode: observedMode,
+      ...(observedMode === 'handoff' ? { handoff_url: observation.url } : { handoff_url: null }) };
+    const withinLimit = observation.price_cents != null && observation.price_cents <= mandate.max_total_cents;
     const trusted = mandate.allowed_domains.some(domain => observation.domain === domain || observation.domain.endsWith(`.${domain}`));
     const allowed = withinLimit && trusted && (!mandate.require_first_party || observation.sold_by_merchant);
     const reasons = allowed ? [] : [{ code: !withinLimit ? 'OVER_BUDGET' : !trusted ? 'MERCHANT_NOT_ALLOWED' : 'FIRST_PARTY_REQUIRED', severity: 'BLOCK' as const, source: 'deterministic' as const, message: !withinLimit ? 'The displayed price exceeds the mandate limit.' : !trusted ? 'This website is not in your trusted domains.' : 'The item is not sold by the merchant itself.' }];
@@ -289,17 +295,28 @@ export const mock = {
       const proposal = proposalFor(mandate, product, 'protected', 'ALLOWED', 'ALLOW');
       proposal.proposal_id = evaluation_id;
       proposalById.set(evaluation_id, proposal);
-      return { evaluation_id, observation: observationFor(product), decision: 'ALLOW' as const, reasons: [] };
+      return { evaluation_id, observation: observationFor(product), decision: 'ALLOW' as const, reasons: [], checkout_mode: 'gateway' as const };
     });
-    return { evaluation_id: `evaluation_${runNumber++}`, decision: allowed ? 'ALLOW' : 'BLOCK', reasons,
+    const evaluation_id = `evaluation_${runNumber++}`;
+    observationByEvaluationId.set(evaluation_id, observation);
+    return { evaluation_id, decision: allowed ? 'ALLOW' : 'BLOCK', reasons, checkout_mode: observedMode,
+      ...(observedMode === 'handoff' ? { handoff_url: observation.url } : {}),
       checks: [{ code: 'PRICE_WITHIN_LIMIT', passed: withinLimit, source: 'deterministic' }], observation,
       expires_at: new Date(now.getTime() + 900000).toISOString(), alternatives };
   },
   async useAlternative(evaluationId: string) {
     await delay();
     const proposal = proposalById.get(evaluationId);
-    if (!proposal || proposal.status !== 'ALLOWED') throw new ApiError('ALTERNATIVE_NOT_AVAILABLE', 'This allowed alternative is no longer available.', 404);
+    if (!proposal || proposal.status !== 'ALLOWED' || proposal.checkout_mode !== 'gateway') throw new ApiError('ALTERNATIVE_NOT_AVAILABLE', 'This allowed alternative is not available for demo-store checkout.', 404);
     return { proposal };
+  },
+  async handoff(evaluationId: string) {
+    await delay();
+    const observation = observationByEvaluationId.get(evaluationId);
+    if (!observation?.url || observation.checkout_mode !== 'handoff') throw new ApiError('HANDOFF_NOT_REQUIRED', 'This listing is not an external checkout handoff.', 409);
+    await appendAudit({ ts: new Date().toISOString(), actor: 'user', event_type: 'HANDOFF_OPENED', mandate_id: currentMandate?.mandate_id ?? null,
+      proposal_id: null, payload: { domain: observation.domain, price_cents: observation.price_cents, decision: 'ALLOW' } });
+    return { handoff_url: observation.url };
   },
   async runAgent(mandateId: string, mode: 'naive' | 'protected'): Promise<RunResult> {
     await delay();
@@ -380,6 +397,18 @@ export const mock = {
       await appendAudit({ ts: new Date().toISOString(), actor: 'system', event_type: 'PAYMENT_CAPTURED', mandate_id: proposal.mandate_id, proposal_id: proposalId, payload: { capture_id: capture.id, amount: capture.amount } });
     }
     return { status: passed ? 'CAPTURED' : 'REFUSED', checks, capture };
+  },
+  async getReceipt(proposalId: string) {
+    const proposal = proposalById.get(proposalId);
+    if (!proposal || !capturedProposalIds.has(proposalId)) throw new ApiError('NOT_CAPTURED', 'Receipt is available after capture.', 409);
+    const item = proposal.items[0];
+    const observation = products.find(product => product.product_id === item.sku);
+    const captureId = `MOCK-CAP-${proposalId.slice(-3)}`;
+    return { proposal_id: proposalId, status: 'CAPTURED', simulated: proposal.checkout_mode !== 'gateway',
+      disclosure: proposal.checkout_mode !== 'gateway' ? 'PayPal sandbox simulation. Nothing is purchased from this store and no real money moves.' : 'Demo store sandbox payment.',
+      product: { title: item.name, url: observation?.url ?? '', domain: observation?.domain ?? 'demo.localhost', price_cents: item.unit_price_cents, currency: proposal.currency, source: 'curated' },
+      paypal: { order_id: orderByProposal.get(proposalId)!, capture_id: captureId, amount: (proposal.total_cents / 100).toFixed(2) },
+      checks: Object.entries(verificationLabels).map(([id, detail]) => ({ id, passed: true, detail })), audit: { chain_ok: true, events_count: 3 }, created_at: proposal.created_at, captured_at: new Date().toISOString() };
   },
   async getAudit(filters: { proposal_id?: string; mandate_id?: string } = {}): Promise<AuditResult> {
     await delay();

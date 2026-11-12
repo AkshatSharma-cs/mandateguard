@@ -136,8 +136,11 @@ export const api = {
   useAlternative(evaluationId: string) {
     return useMock ? mock.useAlternative(evaluationId) : request<{ proposal: import('../types').Proposal }>('/api/v1/proposals', { method: 'POST', body: JSON.stringify({ evaluation_id: evaluationId }) });
   },
+  handoff(evaluationId: string) {
+    return useMock ? mock.handoff(evaluationId) : request<{ handoff_url: string }>(`/api/v1/evaluations/${encodeURIComponent(evaluationId)}/handoff`, { method: 'POST', body: '{}' });
+  },
   parseMandate(instruction: string) {
-    return useMock ? mock.parseMandate(instruction) : request<{ mandate: Mandate; notes: string[] }>(`${API_BASE}/mandates/parse`, { method: 'POST', body: JSON.stringify({ instruction }) });
+    return useMock ? mock.parseMandate(instruction) : request<{ mandate: Mandate; notes: string[] }>(`${API_BASE}/v1/mandates`, { method: 'POST', body: JSON.stringify({ instruction }) });
   },
   confirmMandate(id: string) {
     return useMock ? mock.confirmMandate(id) : request<{ mandate: Mandate }>(`/api/v1/mandates/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: '{}' }).then(result => result.mandate);
@@ -152,11 +155,11 @@ export const api = {
     if (useMock) return mock.runAgent(mandate_id, mode);
     return runLiveAgent(mandate_id).then((snapshot) => {
       const data = snapshot as { run_id: string; candidates?: RunResult['candidates']; naive_candidates?: RunResult['candidates']; proposal?: RunResult['proposal']; compare_links?: RunResult['compare_links'];
-        naive?: { proposal?: RunResult['proposal']; reasoning?: string; would_have_been?: RunResult['would_have_been'] }; allowed_alternative_ids?: string[] };
+        naive?: { proposal?: RunResult['proposal']; reasoning?: string; would_have_been?: RunResult['would_have_been']; fallback?: boolean; violations?: RunResult['violations'] }; allowed_alternative_ids?: string[] };
       return mode === 'protected'
         ? { run_id: data.run_id, mode, enforced: true, candidates: data.candidates ?? [], proposal: data.proposal ?? null, naive_reasoning: null, allowed_alternative_ids: data.allowed_alternative_ids ?? [], compare_links: data.compare_links ?? [] }
         : { run_id: data.run_id, mode, enforced: false, candidates: data.naive_candidates ?? [], proposal: data.naive?.proposal ?? null,
-          naive_reasoning: data.naive?.reasoning ?? null, would_have_been: data.naive?.would_have_been };
+          naive_reasoning: data.naive?.reasoning ?? null, naive_fallback: data.naive?.fallback ?? false, naive_violations: data.naive?.violations ?? [], would_have_been: data.naive?.would_have_been };
     });
   },
   async runBothAgent(mandate_id: string, onEvent?: (event: AgentStreamEvent) => void) {
@@ -165,15 +168,18 @@ export const api = {
       return { naive, protected: protectedRun };
     }
     const snapshot = await runLiveAgent(mandate_id, onEvent) as { run_id: string; candidates?: RunResult['candidates']; naive_candidates?: RunResult['candidates']; compare_links?: RunResult['compare_links']; discovery_provider?: RunResult['discovery_provider']; listing_count?: number;
-      proposal?: RunResult['proposal']; naive?: { proposal?: RunResult['proposal']; reasoning?: string; would_have_been?: RunResult['would_have_been'] }; allowed_alternative_ids?: string[] };
+      proposal?: RunResult['proposal']; naive?: { proposal?: RunResult['proposal']; reasoning?: string; would_have_been?: RunResult['would_have_been']; fallback?: boolean; violations?: RunResult['violations'] }; allowed_alternative_ids?: string[] };
     return {
       protected: { run_id: snapshot.run_id, mode: 'protected' as const, enforced: true, candidates: snapshot.candidates ?? [], proposal: snapshot.proposal ?? null, naive_reasoning: null, allowed_alternative_ids: snapshot.allowed_alternative_ids ?? [], compare_links: snapshot.compare_links ?? [], discovery_provider: snapshot.discovery_provider, listing_count: snapshot.listing_count },
       naive: { run_id: snapshot.run_id, mode: 'naive' as const, enforced: false, candidates: snapshot.naive_candidates ?? [], proposal: snapshot.naive?.proposal ?? null,
-        naive_reasoning: snapshot.naive?.reasoning ?? null, would_have_been: snapshot.naive?.would_have_been },
+        naive_reasoning: snapshot.naive?.reasoning ?? null, naive_fallback: snapshot.naive?.fallback ?? false, naive_violations: snapshot.naive?.violations ?? [], would_have_been: snapshot.naive?.would_have_been },
     };
   },
   createCheckout(proposalId: string) {
     return useMock ? mock.createCheckout(proposalId) : request<{ paypal_order_id: string }>(`${API_BASE}/proposals/${encodeURIComponent(proposalId)}/checkout`, { method: 'POST', body: '{}' });
+  },
+  getReceipt(proposalId: string) {
+    return useMock ? mock.getReceipt(proposalId) : request<import('../types').Receipt>(`${API_BASE}/proposals/${encodeURIComponent(proposalId)}/receipt`);
   },
   async capture(proposalId: string, orderId: string): Promise<CaptureResult> {
     if (useMock) return mock.capture(proposalId, orderId);

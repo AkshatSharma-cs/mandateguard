@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Approved graphite wireless mouse product illustration</title>
+  <desc id="desc">A graphite wireless mouse on a clean paper backdrop with its basic product details.</desc>
+  <rect width="960" height="600" rx="32" fill="#F5F7FA"/>
+  <rect x="74" y="64" width="812" height="472" rx="28" fill="#FFFFFF" stroke="#DADDDD" stroke-width="3"/>
+  <text x="120" y="126" fill="#4A5568" font-family="Arial,sans-serif" font-size="22" font-weight="600">APPROVED LISTING</text>
+  <text x="120" y="170" fill="#000000" font-family="Arial,sans-serif" font-size="34" font-weight="700">Wireless optical mouse</text>
+  <ellipse cx="478" cy="362" rx="250" ry="126" fill="#E8EEFB"/>
+  <g transform="translate(340 198) rotate(-4 140 150)">
+    <path d="M140 0C58 0 14 54 14 140v52c0 85 48 139 126 139s126-54 126-139v-52C266 54 222 0 140 0Z" fill="#4A5568"/>
+    <path d="M140 7c-4 44-4 80 0 115" fill="none" stroke="#DADDDD" stroke-width="6"/>
+    <rect x="128" y="40" width="24" height="56" rx="12" fill="#F5F7FA"/>
+    <path d="M65 270c42 22 108 24 150 0" fill="none" stroke="#000000" stroke-width="5"/>
+  </g>
+  <rect x="122" y="446" width="232" height="42" rx="21" fill="#E6F4EC"/>
+  <circle cx="150" cy="467" r="8" fill="#0B6B3A"/>
+  <text x="170" y="474" fill="#0B6B3A" font-family="Arial,sans-serif" font-size="18" font-weight="700">Within the mandate</text>
+  <text x="718" y="474" fill="#4A5568" font-family="Arial,sans-serif" font-size="20" text-anchor="end">$24.99</text>
+</svg>

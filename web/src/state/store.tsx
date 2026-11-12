@@ -136,7 +136,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       } else if (event.type === 'naive') {
         const proposal = event.data.proposal as Proposal | null;
         partialNaive = { run_id: runId, mode: 'naive', enforced: false, candidates: partialNaive?.candidates ?? [],
-          proposal, naive_reasoning: String(event.data.reasoning ?? ''), would_have_been: event.data.would_have_been as RunResult['would_have_been'] };
+          proposal, naive_reasoning: String(event.data.reasoning ?? ''), naive_fallback: event.data.fallback === true,
+          naive_violations: Array.isArray(event.data.violations) ? event.data.violations as RunResult['naive_violations'] : [],
+          would_have_been: event.data.would_have_been as RunResult['would_have_been'] };
         dispatch({ type: 'runs', value: { naive: partialNaive, protected: partialProtected } });
       } else if (event.type === 'proposal') {
         partialProtected = { run_id: runId, mode: 'protected', enforced: true, candidates: partialProtected?.candidates ?? [],

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Wireless mouse bundle product illustration</title>
+  <desc id="desc">A compact keyboard, graphite mouse and travel case arranged as a clean product advertisement.</desc>
+  <rect width="960" height="600" rx="32" fill="#F5F7FA"/>
+  <circle cx="730" cy="152" r="152" fill="#E8EEFB"/>
+  <rect x="92" y="72" width="776" height="456" rx="28" fill="#FFFFFF" stroke="#DADDDD" stroke-width="3"/>
+  <text x="136" y="132" fill="#4A5568" font-family="Arial,sans-serif" font-size="22" font-weight="600">WIRELESS DESK SET</text>
+  <text x="136" y="174" fill="#000000" font-family="Arial,sans-serif" font-size="34" font-weight="700">One listing. Three items.</text>
+  <g transform="translate(138 254)">
+    <rect x="4" y="22" width="440" height="160" rx="20" fill="#002994"/>
+    <rect x="20" y="38" width="408" height="128" rx="12" fill="#001F73"/>
+    <g fill="#F5F7FA">
+      <rect x="38" y="56" width="36" height="26" rx="5"/><rect x="82" y="56" width="36" height="26" rx="5"/><rect x="126" y="56" width="36" height="26" rx="5"/><rect x="170" y="56" width="36" height="26" rx="5"/><rect x="214" y="56" width="36" height="26" rx="5"/><rect x="258" y="56" width="36" height="26" rx="5"/><rect x="302" y="56" width="36" height="26" rx="5"/><rect x="346" y="56" width="60" height="26" rx="5"/>
+      <rect x="38" y="94" width="50" height="26" rx="5"/><rect x="96" y="94" width="36" height="26" rx="5"/><rect x="140" y="94" width="36" height="26" rx="5"/><rect x="184" y="94" width="36" height="26" rx="5"/><rect x="228" y="94" width="36" height="26" rx="5"/><rect x="272" y="94" width="36" height="26" rx="5"/><rect x="316" y="94" width="90" height="26" rx="5"/>
+      <rect x="38" y="132" width="70" height="20" rx="5"/><rect x="116" y="132" width="224" height="20" rx="5"/><rect x="348" y="132" width="58" height="20" rx="5"/>
+    </g>
+  </g>
+  <g transform="translate(610 246)">
+    <path d="M124 0c-64 0-106 42-106 112v42c0 64 43 108 106 108s106-44 106-108v-42C230 42 188 0 124 0Z" fill="#000000"/>
+    <path d="M124 4c-3 42-3 72 0 98" fill="none" stroke="#7B8494" stroke-width="5"/>
+    <rect x="111" y="34" width="26" height="52" rx="13" fill="#DADDDD"/>
+    <path d="M46 197c36 26 121 31 158 0" fill="none" stroke="#4A5568" stroke-width="5"/>
+  </g>
+  <rect x="136" y="452" width="192" height="36" rx="18" fill="#FFF4D6"/>
+  <text x="160" y="477" fill="#000000" font-family="Arial,sans-serif" font-size="18" font-weight="700">BUNDLE LISTING</text>
+</svg>

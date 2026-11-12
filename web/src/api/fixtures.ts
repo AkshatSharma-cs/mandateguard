@@ -81,5 +81,5 @@ export const verificationLabels: Record<string, string> = {
   V4: 'You approved the order in PayPal.', V5: 'Currency matches.', V6: 'Amount matches exactly.',
   V7: 'Items match exactly.', V8: 'Order is tagged with the proposal id.',
   V9: 'Payee matches the merchant account (shown as Not returned by PayPal when absent).',
-  V10: 'Not captured before.', V11: 'Policy re-checked: allowed.',
+  V10: 'Not captured before.', V11: 'Policy re-checked: allowed.', V12: 'Payment mode is consistent and disclosed.',
 };

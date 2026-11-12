@@ -10,6 +10,7 @@ const links = [
   { href: '#how', label: 'How it works' },
   { href: '#/console', label: 'Console' },
   { href: '#/tests', label: 'Security tests' },
+  { href: '#/preferences', label: 'Preferences' },
 ];
 
 export function Header() {
@@ -21,7 +22,7 @@ export function Header() {
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
-  const activeHref = hash === '#how' ? '#how' : hash.startsWith('#/console') ? '#/console' : hash.startsWith('#/tests') ? '#/tests' : '#/';
+  const activeHref = hash === '#how' ? '#how' : hash.startsWith('#/console') ? '#/console' : hash.startsWith('#/tests') ? '#/tests' : hash.startsWith('#/preferences') ? '#/preferences' : '#/';
   return <header className="site-header">
     <a className="wordmark" href="#/" aria-label="MandateGuard home"><span>Mandate</span><span>Guard</span></a>
     <nav className="desktop-nav" aria-label="Main navigation">{links.map(link => <a className="desktop-nav-link" aria-current={activeHref === link.href ? 'page' : undefined} key={link.label} href={link.href}>{activeHref === link.href && <motion.span className="nav-highlight" layoutId="navHighlight" transition={motionPrefs.navTransition} aria-hidden="true" />}<span className="nav-label">{link.label}</span></a>)}</nav>
@@ -40,7 +41,7 @@ export function Footer() {
   return <footer className="site-footer">
     <div className="container footer-content">
       <a className="wordmark" href="#/" aria-label="MandateGuard home"><span>Mandate</span><span>Guard</span></a>
-      <nav aria-label="Footer navigation"><a href="#/console">Console</a><a href="#how">How it works</a><a href="#/tests">Security tests</a><a href="#">GitHub</a><span>License MIT</span></nav>
+      <nav aria-label="Footer navigation"><a href="#/console">Console</a><a href="#how">How it works</a><a href="#/tests">Security tests</a><a href="https://github.com/AkshatSharma-cs/mandateguard" target="_blank" rel="noopener noreferrer">GitHub</a><span>License MIT</span></nav>
       <p>MandateGuard is an independent hackathon project. It uses the PayPal sandbox and is not affiliated with or endorsed by PayPal.</p>
       <small>(c) 2026 MandateGuard</small>
     </div>
