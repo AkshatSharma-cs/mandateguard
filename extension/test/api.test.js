@@ -44,6 +44,17 @@ test('normal page evaluation omits mandate_id and proposal creation uses evaluat
   assert.equal(calls[1].url, 'http://localhost:3000/v1/proposals');
 });
 
+test('external listing handoff calls the audit endpoint and returns the server URL', async () => {
+  const calls = [];
+  const api = createApi({ baseUrl: 'http://localhost:3000', fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return new Response(JSON.stringify({ handoff_url: 'https://www.amazon.com/dp/example' }), { status: 200 });
+  } });
+  assert.deepEqual(await api.handoff('eval-42'), { handoff_url: 'https://www.amazon.com/dp/example' });
+  assert.equal(calls[0].url, 'http://localhost:3000/v1/evaluations/eval-42/handoff');
+  assert.equal(calls[0].options.method, 'POST');
+});
+
 test('popup keeps the existing form selector IDs', async () => {
   const html = await readFile(new URL('../popup.html', import.meta.url), 'utf8');
   for (const selector of ['listing-form', 'mandate', 'url', 'title', 'price', 'description', 'submit', 'result', 'error']) {

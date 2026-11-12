@@ -13,15 +13,17 @@
         <p class="eyebrow">MandateGuard</p>
         <h1>Check this listing</h1>
         <p class="intro">Review this page against your confirmed preferences.</p>
+        <p id="connection-status" class="connection-status" aria-live="polite"><span class="connection-dot"></span>Not connected</p>
       </header>
 
-      <button id="settings-toggle" class="text-action" type="button">API settings</button>
+      <button id="settings-toggle" class="text-action settings-button" type="button" aria-label="Settings"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.6 1.6-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-2.3v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-1.6-1.6.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H7v-2.3h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1L10 7.1l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h2.3v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.6 1.6-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2V14h-.2a1.7 1.7 0 0 0-1.6 1Z"></path></svg>Settings</button>
       <form id="connection-form">
         <label for="api-url">API URL</label>
         <input id="api-url" type="url" required value="http://localhost:3000" autocomplete="url">
         <label for="api-key">API key</label>
         <input id="api-key" type="password" autocomplete="off">
-        <button id="connect" type="submit">Connect</button>
+        <button id="show-api-key" class="text-action" type="button">Show API key</button>
+        <button id="connect" type="submit">Save and test</button>
       </form>
 
       <section id="no-preferences" hidden>
@@ -59,6 +61,7 @@
 
       <p class="notice">Page details are provided by you. The extension does not read page content automatically.</p>
       <section id="result" aria-live="polite" hidden></section>
+      <section id="recent-checks" aria-labelledby="recent-title"><div class="history-heading"><h2 id="recent-title">Recent checks</h2><button id="clear-history" class="text-action" type="button" aria-label="Clear recent checks">Clear</button></div><div id="history-list"></div></section>
       <p id="error" class="error" role="alert" hidden></p>
     </main>
     <script type="module" src="popup.js"></script>

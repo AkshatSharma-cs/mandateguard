@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "MandateGuard Companion",
-  "version": "0.1.0",
-  "description": "Check a product listing against an active MandateGuard mandate.",
-  "permissions": ["activeTab"],
+  "name": "MandateGuard",
+  "version": "0.2.0",
+  "description": "Checks the product page you are on against your spending limits.",
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://localhost:3000/*"],
-  "background": { "service_worker": "service-worker.js" },
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
   "action": {
-    "default_title": "Check listing with MandateGuard",
+    "default_title": "MandateGuard",
     "default_popup": "popup.html"
   }
 }

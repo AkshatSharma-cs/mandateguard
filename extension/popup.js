@@ -21,6 +21,8 @@ const narrowForm = $('#narrow-form');
 let api;
 let activeTab = null;
 let latestEvaluation = null;
+let extractedPage = null;
+let pageCheckForbidden = false;
 
 function showError(message) {
   error.textContent = message;
@@ -28,6 +30,10 @@ function showError(message) {
 }
 
 function clearError() { error.textContent = ''; error.hidden = true; }
+function connectionStatus(connected) {
+  const status = $('#connection-status'); status.replaceChildren(element('span', undefined, 'connection-dot'), connected ? 'Connected' : 'Not connected');
+  status.classList.toggle('is-connected', connected);
+}
 function baseUrl() { return $('#api-url').value.trim().replace(/\/+$/, ''); }
 function openPreferences() { chrome.tabs.create({ url: `${baseUrl()}/app/#/preferences` }); }
 function sendBadge(decision) { if (activeTab?.id) void chrome.runtime.sendMessage({ type: 'decision', decision, tabId: activeTab.id }).catch(() => {}); }
@@ -51,15 +57,16 @@ function element(tag, text, className) {
 }
 
 function money(cents, currency = 'USD') {
+  if (cents == null) return 'Price unknown';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(cents / 100);
 }
 
 function productObservation() {
   const url = new URL(urlInput.value.trim());
   const rawPrice = priceInput.value.trim();
-  if (!rawPrice) throw new Error('Enter the displayed price in USD.');
-  const price = Number(rawPrice);
-  if (!Number.isFinite(price) || price < 0) throw new Error('Enter the displayed price in USD.');
+  const match = rawPrice.match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (rawPrice && !match) throw new Error('Enter the displayed price using dollars and cents.');
+  const price_cents = match ? Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0')) : null;
   const text = descriptionInput.value.trim();
   const title = titleInput.value.trim();
   if (!title) throw new Error('Enter the product title.');
@@ -69,17 +76,17 @@ function productObservation() {
     domain: url.hostname.toLowerCase(),
     source: 'page',
     title,
-    price_cents: Math.round(price * 100),
-    currency: 'USD',
-    seller: url.hostname,
+    price_cents,
+    currency: extractedPage?.currency || 'USD',
+    seller: extractedPage?.seller || url.hostname,
     sold_by_merchant: false,
-    availability: 'unknown',
+    availability: extractedPage?.availability || 'unknown',
     image_url: null,
-    category_hint: null,
-    bundle_signal: null,
-    hidden_text_found: false,
+    category_hint: extractedPage?.category_hint || null,
+    bundle_signal: extractedPage?.bundle_signal ?? null,
+    hidden_text_found: extractedPage?.hidden_text_found || false,
     text: `${title}\n${text}`.slice(0, 4000),
-    captured_at: new Date().toISOString(),
+    captured_at: extractedPage?.captured_at || new Date().toISOString(),
     content_hash: '',
   };
 }
@@ -112,20 +119,25 @@ async function connect() {
   const apiUrl = baseUrl();
   let parsedApiUrl;
   try { parsedApiUrl = new URL(apiUrl); } catch { showError('Enter a valid API URL.'); return; }
-  if (!['http:', 'https:'].includes(parsedApiUrl.protocol) || parsedApiUrl.hostname !== 'localhost') {
-    showError('This extension build can connect to the local API at localhost:3000.'); return;
+  if (!['http:', 'https:'].includes(parsedApiUrl.protocol)) { showError('Enter an HTTP or HTTPS API address.'); return; }
+  if (parsedApiUrl.hostname !== 'localhost' && parsedApiUrl.hostname !== '127.0.0.1') {
+    const granted = await chrome.permissions.request({ origins: [`${parsedApiUrl.origin}/*`] });
+    if (!granted) { showError('Permission to connect to this API address was not granted.'); return; }
   }
   localStorage.setItem('mandateguard_api_url', apiUrl);
   localStorage.setItem('mandateguard_api_key', $('#api-key').value.trim());
+  await chrome.storage.local.set({ apiBase: apiUrl, apiKey: $('#api-key').value.trim() });
   api = createApi({ baseUrl: apiUrl, apiKey: $('#api-key').value.trim() });
   setBusy($('#connect'), true, 'Connecting…');
   try {
     const profileResponse = await api.getProfiles();
+    connectionStatus(true);
     const hasPreferences = renderProfiles(profileResponse);
     preferences.hidden = hasPreferences;
     connectionForm.hidden = true;
-    if (hasPreferences) await analyzeCurrentPage();
+    if (hasPreferences && !pageCheckForbidden) await analyzeCurrentPage();
   } catch (cause) {
+    connectionStatus(false);
     showError(cause instanceof Error ? cause.message : 'Could not connect to the MandateGuard API.');
   } finally { setBusy($('#connect'), false); }
 }
@@ -140,9 +152,16 @@ function renderResult(evaluation) {
 
   if (evaluation.decision === 'ALLOW') {
     result.append(element('p', 'Matches your preferences', 'match-copy'));
-    const createProposal = element('button', 'Create proposal and pay', 'primary-action');
-    createProposal.type = 'button';
-    createProposal.addEventListener('click', () => void createProposalAndPay(evaluation.evaluation_id, createProposal));
+    const actions = element('div', undefined, 'result-actions');
+    const createProposal = element('button', 'Buy now', 'primary-action'); createProposal.type = 'button';
+    createProposal.setAttribute('aria-label', `Buy now ${observation.title}`);
+    createProposal.addEventListener('click', () => showBuyConfirmation(evaluation.evaluation_id, observation, actions));
+    actions.append(createProposal, element('span', 'PayPal sandbox', 'decision-pill'));
+    if (observation.checkout_mode === 'handoff') {
+      const open = element('button', `Open at ${observation.domain}`, 'text-action'); open.type = 'button';
+      open.addEventListener('click', () => void openHandoff(evaluation.evaluation_id, open)); actions.append(open);
+    }
+    result.append(actions);
     const evidenceButton = element('button', 'Show evidence', 'text-action');
     evidenceButton.type = 'button';
     const evidence = renderEvidence(evaluation, observation);
@@ -151,7 +170,7 @@ function renderResult(evaluation) {
       evidence.hidden = !evidence.hidden;
       evidenceButton.textContent = evidence.hidden ? 'Show evidence' : 'Hide evidence';
     });
-    result.append(createProposal, evidenceButton, evidence);
+    result.append(evidenceButton, evidence);
   } else {
     const reasonList = element('ul', undefined, 'reason-list');
     for (const reason of evaluation.reasons || []) reasonList.append(element('li', reason.message));
@@ -166,7 +185,7 @@ function renderResult(evaluation) {
       result.append(list);
     } else {
       result.append(element('p', 'No allowed alternative found.'));
-      const searchAgain = element('button', 'Search again', 'text-action');
+      const searchAgain = element('button', 'Find alternatives', 'text-action');
       searchAgain.type = 'button';
       searchAgain.addEventListener('click', () => void searchAgainFor(observation, searchAgain));
       result.append(searchAgain);
@@ -174,6 +193,25 @@ function renderResult(evaluation) {
   }
   result.hidden = false;
   sendBadge(evaluation.decision);
+  void rememberCheck(observation, evaluation.decision);
+}
+
+async function rememberCheck(observation, decision) {
+  const { recentChecks = [] } = await chrome.storage.local.get('recentChecks');
+  const next = [{ title: observation.title, url: observation.url, domain: observation.domain,
+    price: observation.price_cents == null ? null : money(observation.price_cents, observation.currency), decision,
+    time: new Date().toISOString() }, ...recentChecks].slice(0, 10);
+  await chrome.storage.local.set({ recentChecks: next }); renderHistory(next);
+}
+
+function renderHistory(entries) {
+  const list = $('#history-list'); list.replaceChildren();
+  for (const entry of entries) {
+    const button = element('button', `${entry.title} · ${entry.price ?? 'Price unknown'} · ${entry.domain} · ${entry.decision} · ${new Date(entry.time).toLocaleString()}`, 'history-entry');
+    button.type = 'button'; button.setAttribute('aria-label', `Reopen ${entry.title} at ${entry.domain}`);
+    button.addEventListener('click', () => chrome.tabs.create({ url: entry.url })); list.append(button);
+  }
+  $('#recent-checks').hidden = entries.length === 0;
 }
 
 function renderEvidence(evaluation, observation) {
@@ -193,13 +231,40 @@ function renderAlternative(alternative) {
   const link = element('a', observation.title);
   link.href = observation.url;
   link.target = '_blank';
-  link.rel = 'noopener';
+  link.rel = 'noopener noreferrer';
   row.append(link, element('p', `${money(observation.price_cents, observation.currency)} · ${observation.domain}`));
-  const use = element('button', 'Use this instead');
+  const actions = element('div', undefined, 'result-actions');
+  const use = element('button', 'Buy now', 'primary-action');
   use.type = 'button';
-  use.addEventListener('click', () => void useAlternative(alternative.evaluation_id, use));
-  row.append(use);
+  use.setAttribute('aria-label', `Buy now ${observation.title}`);
+  use.addEventListener('click', () => showBuyConfirmation(alternative.evaluation_id, observation, actions));
+  actions.append(use, element('span', 'PayPal sandbox', 'decision-pill'));
+  if (alternative.checkout_mode === 'handoff') { const open = element('button', `Open at ${observation.domain}`, 'text-action'); open.type = 'button'; open.addEventListener('click', () => void openHandoff(alternative.evaluation_id, open)); actions.append(open); }
+  row.append(actions);
   return row;
+}
+
+function showBuyConfirmation(evaluationId, observation, container) {
+  container.replaceChildren();
+  const message = observation.checkout_mode === 'gateway'
+    ? 'This is a sandbox order on the MandateGuard demo store. No real purchase or shipment happens.'
+    : `This creates a PayPal sandbox order. Nothing is purchased at ${observation.domain} and no real money moves.`;
+  container.append(element('p', message, 'match-copy'));
+  const proceed = element('button', 'Continue', 'primary-action'); proceed.type = 'button';
+  proceed.setAttribute('aria-label', `Continue to PayPal for ${observation.title}`);
+  proceed.addEventListener('click', () => void createProposalAndPay(evaluationId, proceed));
+  const cancel = element('button', 'Cancel', 'text-action'); cancel.type = 'button';
+  cancel.addEventListener('click', () => { container.replaceChildren(); });
+  container.append(proceed, cancel);
+}
+
+async function openHandoff(evaluationId, button) {
+  clearError(); setBusy(button, true, 'Opening…');
+  try {
+    const { handoff_url } = await api.handoff(evaluationId);
+    chrome.tabs.create({ url: handoff_url });
+  } catch (cause) { showError(cause instanceof Error ? cause.message : 'The product page could not be opened.'); }
+  finally { setBusy(button, false); }
 }
 
 async function createProposalAndPay(evaluationId, button) {
@@ -271,6 +336,7 @@ async function savePreferences(event) {
 function setConnectionValues() {
   $('#api-url').value = localStorage.getItem('mandateguard_api_url') || 'http://localhost:3000';
   $('#api-key').value = localStorage.getItem('mandateguard_api_key') || '';
+  void chrome.storage.local.set({ apiBase: $('#api-url').value, apiKey: $('#api-key').value });
 }
 
 connectionForm.addEventListener('submit', event => { event.preventDefault(); void connect(); });
@@ -278,6 +344,10 @@ profileForm.addEventListener('submit', event => { void savePreferences(event); }
 form.addEventListener('submit', event => { event.preventDefault(); void analyzeCurrentPage(); });
 $('#set-preferences').addEventListener('click', openPreferences);
 $('#settings-toggle').addEventListener('click', () => { connectionForm.hidden = !connectionForm.hidden; });
+$('#show-api-key').addEventListener('click', () => {
+  const input = $('#api-key'); const visible = input.type === 'password'; input.type = visible ? 'text' : 'password';
+  $('#show-api-key').textContent = visible ? 'Hide API key' : 'Show API key';
+});
 narrowLink.addEventListener('click', event => { event.preventDefault(); narrowForm.hidden = !narrowForm.hidden; });
 narrowForm.addEventListener('submit', async event => {
   event.preventDefault(); clearError();
@@ -294,12 +364,24 @@ narrowForm.addEventListener('submit', async event => {
 
 chrome.tabs.query({ active: true, lastFocusedWindow: true }, tabs => {
   activeTab = tabs[0] ?? null;
-  if (activeTab?.url?.startsWith('https://')) urlInput.value = activeTab.url;
-  if (activeTab?.title && !titleInput.value) titleInput.value = activeTab.title;
+  const forbidden = !activeTab?.id || /^(chrome|edge|file):\/\//i.test(activeTab.url || '') || /chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(activeTab.url || '');
+  if (forbidden) { pageCheckForbidden = true; void connect().finally(() => showError('This page cannot be checked.')); return; }
+  chrome.scripting.executeScript({ target: { tabId: activeTab.id }, files: ['content/extract.js'] })
+    .then(() => chrome.scripting.executeScript({ target: { tabId: activeTab.id }, func: () => window.__mgExtract?.() }))
+    .then(results => {
+      extractedPage = results?.[0]?.result ?? null;
+      if (extractedPage) {
+        urlInput.value = extractedPage.url; titleInput.value = extractedPage.title;
+        priceInput.value = extractedPage.price_cents == null ? '' : `${Math.floor(extractedPage.price_cents / 100)}.${String(extractedPage.price_cents % 100).padStart(2, '0')}`;
+        descriptionInput.value = extractedPage.text;
+      }
+      void connect();
+    }).catch(() => { if (activeTab?.url) urlInput.value = activeTab.url; void connect(); });
 });
 
 mandateSelect.hidden = true;
 setConnectionValues();
 connectionForm.hidden = false;
 api = createApi({ baseUrl: $('#api-url').value, apiKey: $('#api-key').value });
-void connect();
+void chrome.storage.local.get('recentChecks').then(({ recentChecks = [] }) => renderHistory(recentChecks));
+$('#clear-history').addEventListener('click', async () => { await chrome.storage.local.set({ recentChecks: [] }); renderHistory([]); });
