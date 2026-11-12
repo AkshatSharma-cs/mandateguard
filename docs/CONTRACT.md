@@ -49,9 +49,12 @@ POST /api/mandates/:id/revoke -> mandate
 GET  /api/mandates/:id
 GET  /api/catalogue -> {merchants, products}
 POST /api/agent/run {mandate_id, mode:'naive'|'protected'} -> {run_id, mode, enforced:boolean, candidates:[{product_id, decision, reasons, extraction|null}], proposal|null, naive_reasoning|null}
-POST /api/proposals/:id/checkout -> {paypal_order_id}  (only if status ALLOWED; re-evaluates policy)
+POST /api/proposals/:id/checkout -> {paypal_order_id}  (only if status ALLOWED; re-evaluates policy; sandbox_simulation is disclosed and never purchases from the external store)
 POST /api/proposals/:id/capture {order_id} -> {status, checks[], capture|null}
+GET  /api/proposals/:id/receipt -> captured receipt with V1..V12 and audit status (404 unknown, 409 before capture)
 GET  /api/audit?proposal_id=&mandate_id= -> {events[], chain_ok}
+
+PAYMENT MODE: Server computes `payment_mode` as `store_checkout` for the hosted demo store and `sandbox_simulation` for external stores or browser pages. External listings may create a PayPal sandbox order only with the fixed disclosure: “PayPal sandbox simulation. MandateGuard created a sandbox order for this product. Nothing is purchased from <domain> and no real money moves.” The order is not a retailer purchase and no real money moves.
 GET  /api/config/public -> {paypal_client_id, currency}
 
-ENV: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_BASE_URL (https://api-m.sandbox.paypal.com), PAYPAL_BUSINESS_EMAIL, APP_BASE_URL (http://localhost:3000), PORT, LLM_PROVIDER (gemini|anthropic), LLM_API_KEY (required unless LLM_MODE=replay), LLM_MODEL, LLM_MODE (live|record|replay).
+ENV: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_BASE_URL (https://api-m.sandbox.paypal.com), PAYPAL_BUSINESS_EMAIL, APP_BASE_URL (http://localhost:3000), PORT, LLM_PROVIDER (gemini|anthropic), LLM_API_KEY (required unless LLM_MODE=replay), LLM_MODEL, optional LLM_FALLBACK_PROVIDER / LLM_FALLBACK_MODEL / LLM_FALLBACK_API_KEY for failover (Gemini defaults to Gemini 3.5 Flash-Lite; same-provider fallback reuses the primary key), LLM_MODE (live|record|replay).

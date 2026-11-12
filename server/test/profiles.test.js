@@ -149,7 +149,7 @@ test('API derives from the default profile and returns NO_PREFERENCES without on
   assert.equal(result.decision, 'ALLOW', JSON.stringify(result.reasons));
 });
 
-test('API alternatives persist ALLOW evaluations as proposal-ready and fail closed to an empty list', async (t) => {
+test('API alternatives persist ALLOW evaluations with the right checkout boundary and fail closed to an empty list', async (t) => {
   const database = createDatabase(':memory:'); t.after(() => database.close());
   const audit = createAudit(database);
   const extraction = { ok: true, extraction: { category_label: 'mouse', claimed_price_cents: null, claims_bundle: false, addon_offers: [], directives_to_agent: false, asserts_authority_override: false, urgency_pressure: false, evidence: [], confidence: 0.99 }, flags: { zero_width: false, html_comment: false, hidden_style: false } };
@@ -173,9 +173,10 @@ test('API alternatives persist ALLOW evaluations as proposal-ready and fail clos
   assert.equal(result.decision, 'BLOCK');
   assert.equal(result.alternatives.length, 1);
   assert.equal(result.alternatives[0].decision, 'ALLOW');
+  assert.equal(result.alternatives[0].checkout_mode, 'handoff');
   const proposalResponse = await fetch(`${base}/v1/proposals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ evaluation_id: result.alternatives[0].evaluation_id }) });
   assert.equal(proposalResponse.status, 201);
-  assert.equal((await proposalResponse.json()).proposal.status, 'ALLOWED');
+  assert.equal((await proposalResponse.json()).proposal.payment_mode, 'sandbox_simulation');
 
   const failingRouter = createV1Router({ database, append: audit.append, extractListing: async () => extraction,
     searchProducts: async () => { throw new Error('catalogue unavailable'); },

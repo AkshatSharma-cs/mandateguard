@@ -27,16 +27,37 @@ const parsedTaskSchema = z.object({
   require_first_party: z.boolean().nullable(),
   allowed_domains: z.array(domainSchema).max(50).nullable(),
 }).strict();
-const itemCategories = new Set(['mouse', 'keyboard', 'headset', 'monitor', 'webcam']);
+function canonicalItemCategory(terms = []) {
+  const text = terms.join(' ').toLocaleLowerCase();
+  if (/\b(?:mouse|mice)\b/.test(text)) return 'mouse';
+  if (/\b(?:keyboards?|keypads?)\b/.test(text)) return 'keyboard';
+  if (/\b(?:headsets?|headphones?)\b/.test(text)) return 'headset';
+  if (/\b(?:monitors?|displays?)\b/.test(text)) return 'monitor';
+  if (/\b(?:webcams?|web cameras?)\b/.test(text)) return 'webcam';
+  return null;
+}
+
+function normalizeTaskCategories(parsed, instruction = '') {
+  const terms = [...parsed.category_terms, instruction, parsed.item_query ?? ''];
+  const category = canonicalItemCategory(terms);
+  return {
+    ...parsed,
+    category_terms: category && !parsed.category_terms.includes(category)
+      ? [...parsed.category_terms, category]
+      : parsed.category_terms,
+  };
+}
 
 function amountFromInstruction(instruction) {
-  const amountPattern = '(\\d+(?:\\.\\d{1,2})?)(?![\\d.])';
-  const explicit = instruction.match(new RegExp(`\\$\\s*${amountPattern}`));
+  // Permit sentence punctuation after an amount while rejecting truncated decimals.
+  const amountPattern = '((?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?)(?![\\d,]|\\.\\d)';
   const contextual = instruction.match(new RegExp(`\\b(?:under|below|up\\s+to|max(?:imum)?|budget(?:\\s+of)?)\\s+\\$?\\s*${amountPattern}`, 'i'));
-  const amount = contextual?.[1] ?? explicit?.[1];
+  const explicit = instruction.match(new RegExp(`\\$\\s*${amountPattern}`));
+  const dollars = instruction.match(new RegExp(`\\b${amountPattern}\\s+dollars?\\b`, 'i'));
+  const amount = contextual?.[1] ?? explicit?.[1] ?? dollars?.[1];
   if (!amount) return null;
-  const [dollars, cents = ''] = amount.split('.');
-  return `${dollars}.${cents.padEnd(2, '0')}`;
+  const [whole, cents = ''] = amount.replaceAll(',', '').split('.');
+  return `${whole}.${cents.padEnd(2, '0')}`;
 }
 function domainsFromInstruction(instruction) {
   return [...new Set([...instruction.matchAll(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi)].map(([domain]) => domain.toLowerCase()))];
@@ -52,6 +73,18 @@ function taskFromInstruction(instruction) {
     require_first_party: /\bfirst[ -]party\b/i.test(instruction) ? true : /\bthird[ -]party\s+(?:sellers?\s+)?(?:are\s+)?allowed\b/i.test(instruction) ? false : null,
     allowed_domains: domainsFromInstruction(instruction).length ? domainsFromInstruction(instruction) : null,
   });
+}
+function deterministicTaskFallback(instruction) {
+  const parsed = taskFromInstruction(instruction);
+  // A fallback is safe only when the buyer explicitly named a supported product category.
+  // Spending limits remain subject to the same numeric cross-check and confirmation flow.
+  if (parsed.category_terms.length === 0) {
+    const error = new Error('The language model is unavailable. State a supported product category, such as keyboard, and try again.');
+    error.code = 'PARSE_ERROR';
+    throw error;
+  }
+  Object.defineProperty(parsed, 'deterministic_fallback', { value: true });
+  return parsed;
 }
 function profileFromInstruction(instruction) {
   const max_total = amountFromInstruction(instruction);
@@ -75,8 +108,10 @@ export async function parseTaskInstruction(instruction) {
       user: String(instruction), temperature: 0, sample_id: 'v3-task-parser',
     });
   } catch (error) {
-    if (error instanceof ReplayMiss) return taskFromInstruction(String(instruction));
-    throw error;
+    // The explicit task text still supports safe deterministic extraction when
+    // the provider is offline, rate-limited, misconfigured, or has no replay.
+    // The fallback requires a named supported category and never invents one.
+    return deterministicTaskFallback(String(instruction));
   }
   const result = parsedTaskSchema.safeParse(raw);
   if (!result.success) {
@@ -84,7 +119,7 @@ export async function parseTaskInstruction(instruction) {
     error.code = 'PARSE_ERROR';
     throw error;
   }
-  return result.data;
+  return normalizeTaskCategories(result.data, String(instruction));
 }
 
 export async function parseProfileInstruction(instruction) {
@@ -131,7 +166,7 @@ export function deriveTaskMandate(profile, parsed, { now = new Date(), owner_id 
   if (!profile || profile.kind !== 'profile' || profile.status !== 'active' || profile.confirmed_by !== 'user') {
     throw new Error('Task mandates can only derive from a user-confirmed profile');
   }
-  const value = parsedTaskSchema.parse(parsed);
+  const value = normalizeTaskCategories(parsedTaskSchema.parse(parsed));
   const instant = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(instant.getTime())) throw new Error('Invalid task creation time');
   if (!Number.isFinite(Date.parse(profile.expires_at)) || Date.parse(profile.expires_at) <= instant.getTime()) throw new Error('Cannot derive from an expired profile');
@@ -153,7 +188,7 @@ export function deriveTaskMandate(profile, parsed, { now = new Date(), owner_id 
     mandate_id: `mandate_${randomUUID()}`, kind: 'task', parent_profile_id: profile.mandate_id, is_default: false,
     version: 1, status: exceeded.length ? 'pending_confirmation' : 'active', owner_id,
     original_instruction: '', item_query: value.item_query, category_terms: value.category_terms,
-    item_category: value.category_terms.find((term) => itemCategories.has(term.toLowerCase())) ?? null,
+    item_category: canonicalItemCategory(value.category_terms),
     max_unit_price_cents: max_total_cents, max_total_cents, quantity_max: 1, currency: 'USD',
     allowed_merchant_ids: [...(profile.allowed_merchant_ids ?? [])],
     allow_bundles, allow_addons, require_first_party, allowed_domains: [...allowed_domains],
@@ -165,7 +200,7 @@ export function deriveTaskMandate(profile, parsed, { now = new Date(), owner_id 
 }
 
 export function buildUnprofiledTask(parsed, { now = new Date(), owner_id = 'local-user', instruction = '' } = {}) {
-  const value = parsedTaskSchema.parse(parsed);
+  const value = normalizeTaskCategories(parsedTaskSchema.parse(parsed));
   if (value.max_total === null) throw new Error('A maximum total is required without a profile');
   const instant = now instanceof Date ? now : new Date(now);
   const max_total_cents = toCents(value.max_total);
@@ -175,7 +210,7 @@ export function buildUnprofiledTask(parsed, { now = new Date(), owner_id = 'loca
     mandate_id: `mandate_${randomUUID()}`, kind: 'task', parent_profile_id: null, is_default: false,
     version: 1, status: 'pending_confirmation', owner_id, original_instruction: instruction,
     item_query: value.item_query, category_terms: value.category_terms,
-    item_category: value.category_terms.find((term) => itemCategories.has(term.toLowerCase())) ?? null,
+    item_category: canonicalItemCategory(value.category_terms),
     max_unit_price_cents: max_total_cents, max_total_cents, quantity_max: 1, currency: 'USD',
     allowed_merchant_ids: [], allow_bundles: value.allow_bundles === true,
     allow_addons: value.allow_addons === true, require_first_party: value.require_first_party === true,

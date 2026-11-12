@@ -10,6 +10,9 @@ const schema = z.object({
   LLM_API_KEY: z.string().optional(),
   // Empty values in an existing .env file should not produce a malformed provider URL.
   LLM_MODEL: z.string().trim().default('gemini-3.8-flash').transform((value) => value || 'gemini-3.8-flash'),
+  LLM_FALLBACK_PROVIDER: z.enum(['gemini', 'anthropic']).optional(),
+  LLM_FALLBACK_API_KEY: z.string().optional(),
+  LLM_FALLBACK_MODEL: z.string().trim().optional(),
   PAYPAL_CLIENT_ID: z.string().default(''),
   PAYPAL_CLIENT_SECRET: z.string().default(''),
   PAYPAL_BASE_URL: z.string().url().default('https://api-m.sandbox.paypal.com'),
@@ -30,6 +33,23 @@ if (!parsed.success) {
 if (parsed.data.LLM_MODE !== 'replay' && !parsed.data.LLM_API_KEY?.trim()) {
   throw new Error('Invalid environment configuration: LLM_API_KEY is required when LLM_MODE is live or record');
 }
+const fallbackProviderConfigured = Boolean(parsed.data.LLM_FALLBACK_PROVIDER);
+const fallbackModelConfigured = Boolean(parsed.data.LLM_FALLBACK_MODEL?.trim());
+const fallbackKeyConfigured = Boolean(parsed.data.LLM_FALLBACK_API_KEY?.trim());
+if (fallbackProviderConfigured !== fallbackModelConfigured || (fallbackKeyConfigured && !fallbackProviderConfigured)
+  || (parsed.data.LLM_MODE !== 'replay' && fallbackProviderConfigured
+    && parsed.data.LLM_FALLBACK_PROVIDER !== parsed.data.LLM_PROVIDER && !fallbackKeyConfigured)) {
+  throw new Error('Invalid environment configuration: set fallback provider and model together; a different fallback provider also needs LLM_FALLBACK_API_KEY');
+}
 
-export const config = Object.freeze({ ...parsed.data });
+const configValue = { ...parsed.data };
+const fallbackExplicitlyConfigured = Boolean(configValue.LLM_FALLBACK_PROVIDER || configValue.LLM_FALLBACK_MODEL || configValue.LLM_FALLBACK_API_KEY);
+if (!fallbackExplicitlyConfigured && configValue.LLM_PROVIDER === 'gemini') {
+  configValue.LLM_FALLBACK_PROVIDER = 'gemini';
+  configValue.LLM_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
+}
+if (!configValue.LLM_FALLBACK_API_KEY && configValue.LLM_FALLBACK_PROVIDER === configValue.LLM_PROVIDER) {
+  configValue.LLM_FALLBACK_API_KEY = configValue.LLM_API_KEY;
+}
+export const config = Object.freeze(configValue);
 export default config;

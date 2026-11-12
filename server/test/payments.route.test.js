@@ -14,7 +14,7 @@ test('simultaneous capture requests reserve once and call PayPal capture once', 
   const proposal = {
     proposal_id: 'pr1', mandate_id: 'm1', mandate_version: 1, merchant_id: 'm_acme', currency: 'USD',
     items: [{ sku: 'p1', name: 'Mouse', quantity: 1, unit_price_cents: 2499 }], total_cents: 2499,
-    source: 'protected', status: 'ORDER_CREATED', paypal_order_id: 'order1', created_at: new Date().toISOString(),
+    source: 'protected', status: 'ORDER_CREATED', paypal_order_id: 'order1', checkout_mode: 'gateway', payment_mode: 'store_checkout', created_at: new Date().toISOString(),
     evidence: { extractions: {}, sanitize_flags: {}, catalogue_hash: createHash('sha256').update(canonical([product])).digest('hex') },
   };
   const mandate = { mandate_id: 'm1', version: 1, status: 'active', expires_at: '2099-01-01T00:00:00Z', currency: 'USD', item_category: 'mouse',
@@ -63,4 +63,23 @@ test('naive proposals are rejected before PayPal checkout', async (t) => {
   });
   assert.equal(response.status, 409);
   assert.equal(created, 0);
+});
+
+test('receipt is unavailable before capture and includes the simulated product and checks after capture', async (t) => {
+  const proposal = { proposal_id: 'sim-1', mandate_id: 'm1', source: 'protected', status: 'ORDER_CREATED',
+    payment_mode: 'sandbox_simulation', currency: 'USD', total_cents: 2499, paypal_order_id: 'order-sim',
+    created_at: new Date().toISOString(), items: [{ sku: 'item-1234567890', name: 'Mouse', quantity: 1, unit_price_cents: 2499 }],
+    payment_observation: { title: 'Mouse', url: 'https://shop.example/mouse', domain: 'shop.example', source: 'channel3', price_cents: 2499, currency: 'USD' },
+    capture: { id: 'capture-sim', amount: { value: '24.99' } }, capture_checks: Array.from({ length: 12 }, (_, index) => ({ id: `V${index + 1}`, passed: true, detail: 'passed' })) };
+  let current = { ...proposal };
+  const app = express(); app.use('/api', createPaymentsRouter({ storage: { getProposal: () => current } }));
+  const server = app.listen(0); t.after(() => new Promise(resolve => server.close(resolve)));
+  await new Promise(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/api/proposals/sim-1/receipt`;
+  assert.equal((await fetch(url)).status, 409);
+  current = { ...current, status: 'CAPTURED', captured_at: new Date().toISOString() };
+  const response = await fetch(url); assert.equal(response.status, 200);
+  const receipt = await response.json();
+  assert.equal(receipt.simulated, true); assert.equal(receipt.product.domain, 'shop.example');
+  assert.equal(receipt.paypal.capture_id, 'capture-sim'); assert.equal(receipt.checks.length, 12);
 });

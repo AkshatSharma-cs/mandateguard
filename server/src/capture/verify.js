@@ -5,7 +5,7 @@ function check(checks, id, passed, detail) {
   checks.push({ id, passed: Boolean(passed), detail });
 }
 
-export function verifyBeforeCapture({ proposal, mandate, order, businessEmail, alreadyCaptured, policyDecision, now }) {
+export function verifyBeforeCapture({ proposal, mandate, order, businessEmail, alreadyCaptured, policyDecision, now, paymentMode }) {
   const checks = [];
   const safeProposal = proposal && typeof proposal === 'object' ? proposal : {};
   const safeMandate = mandate && typeof mandate === 'object' ? mandate : {};
@@ -30,7 +30,10 @@ export function verifyBeforeCapture({ proposal, mandate, order, businessEmail, a
   const normalizedOrderItems = orderItems.map((item) => ({ sku: item?.sku, quantity: Number(item?.quantity), unit_price_cents: (() => {
     try { return toCents(item?.unit_amount?.value); } catch { return null; }
   })(), currency: item?.unit_amount?.currency_code }));
-  const expectedItems = proposalItems.map((item) => ({ sku: item?.sku, quantity: item?.quantity, unit_price_cents: item?.unit_price_cents }));
+  const expectedItems = proposalItems.map((item) => ({
+    sku: safeProposal.payment_mode === 'sandbox_simulation'
+      ? String(safeProposal.payment_observation?.observation_id ?? item?.sku ?? '').slice(0, 12) : item?.sku,
+    quantity: item?.quantity, unit_price_cents: item?.unit_price_cents }));
   const exactItems = normalizedOrderItems.length === expectedItems.length
     && expectedItems.every((expected, index) => {
       const actual = normalizedOrderItems[index];
@@ -47,6 +50,11 @@ export function verifyBeforeCapture({ proposal, mandate, order, businessEmail, a
   check(checks, 'V9', payeePass, returnedPayee == null ? 'payee not returned' : 'PayPal payee must match configured business email');
   check(checks, 'V10', alreadyCaptured === false, 'proposal SKU must not already be captured');
   check(checks, 'V11', policyDecision === 'ALLOW', 'current policy decision must be ALLOW');
+  const expectedMode = paymentMode;
+  const description = String(unit.description ?? '');
+  check(checks, 'V12', ['store_checkout', 'sandbox_simulation'].includes(expectedMode) && safeProposal.payment_mode === expectedMode
+    && (expectedMode !== 'sandbox_simulation' || description.includes('SANDBOX SIMULATION')),
+  'payment mode must match the stored observation and simulated orders must be disclosed');
 
   return { ok: checks.every((entry) => entry.passed), checks };
 }

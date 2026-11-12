@@ -6,13 +6,20 @@ import { naiveChoose } from '../llm/naiveAgent.js';
 import { listCapturedSkus, saveEvaluation, saveProposal } from '../db.js';
 import { append } from '../audit.js';
 
+const runtime = { getProducts, getMerchants, extractListing, naiveChoose, append, listCapturedSkus, saveProposal };
+export function setAgentRunDependenciesForTests(overrides = {}) {
+  const previous = { ...runtime };
+  Object.assign(runtime, overrides);
+  return () => Object.assign(runtime, previous);
+}
+
 const canonical = (value) => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
   return JSON.stringify(value);
 };
 const actor = 'agent';
-const event = (event_type, mandate, proposal_id, payload) => append({ actor, event_type, mandate_id: mandate.mandate_id, proposal_id, payload });
+const event = (event_type, mandate, proposal_id, payload) => runtime.append({ actor, event_type, mandate_id: mandate.mandate_id, proposal_id, payload });
 
 async function getEvaluate() {
   // The policy engine is an existing project dependency; loading lazily keeps other API routes available if it is missing.
@@ -61,6 +68,16 @@ function observationFor(product, seller, flags = {}, capturedAt = new Date()) {
   };
 }
 
+function candidateFlags(extraction, sanitizeFlags, observation) {
+  return {
+    injection: Boolean(extraction?.directives_to_agent || extraction?.asserts_authority_override),
+    hidden_text: Boolean(observation?.hidden_text_found || sanitizeFlags?.zero_width || sanitizeFlags?.html_comment || sanitizeFlags?.hidden_style),
+    urgency: Boolean(extraction?.urgency_pressure),
+    price_conflict: extraction?.claimed_price_cents != null && observation?.price_cents != null
+      && extraction.claimed_price_cents !== observation.price_cents,
+  };
+}
+
 function proposalId() { return randomUUID(); }
 
 function buildEvaluationProposal(mandate, product, id, now) {
@@ -90,7 +107,7 @@ export async function runProtected({ mandate, now = new Date() }) {
   const instant = now instanceof Date ? now : new Date(now);
   const run_id = randomUUID();
   event('AGENT_RUN_STARTED', mandate, null, { run_id, mode: 'protected' });
-  const products = getProducts().filter((product) => mandate.item_category == null
+  const products = runtime.getProducts().filter((product) => mandate.item_category == null
     ? !Array.isArray(mandate.category_terms) || mandate.category_terms.length === 0 || mandate.category_terms.includes(product.category)
     : product.category === mandate.item_category);
   const evaluate = await getEvaluate();
@@ -113,12 +130,14 @@ export async function runProtected({ mandate, now = new Date() }) {
       };
     }
     results.set(product.product_id, { product, extracted, ...evaluated });
+    const observation = observationFor(product, new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name])).get(product.merchant_id) ?? product.merchant_id, extracted.flags, instant);
     candidates.push({
       product_id: product.product_id,
       decision: evaluated.decision.decision,
       reasons: evaluated.decision.reasons ?? [], checks: evaluated.decision.checks ?? [],
       extraction: extracted.ok ? extracted.extraction : null,
-      observation: observationFor(product, new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name])).get(product.merchant_id) ?? product.merchant_id, extracted.flags, instant),
+      observation,
+      flags: candidateFlags(extracted.ok ? extracted.extraction : null, extracted.flags, observation),
     });
     event('LISTING_SANITIZED', mandate, proposedId, { product_id: product.product_id, flags: extracted.flags });
     event('EXTRACTION_DONE', mandate, proposedId, { product_id: product.product_id, ok: extracted.ok });
@@ -176,19 +195,28 @@ export async function runNaive({ mandate, now = new Date() }) {
   const instant = now instanceof Date ? now : new Date(now);
   const run_id = randomUUID();
   event('AGENT_RUN_STARTED', mandate, null, { run_id, mode: 'naive' });
-  const products = getProducts().filter((product) => mandate.item_category == null
+  const products = runtime.getProducts().filter((product) => mandate.item_category == null
     ? !Array.isArray(mandate.category_terms) || mandate.category_terms.length === 0 || mandate.category_terms.includes(product.category)
     : product.category === mandate.item_category);
-  const merchants = new Map(getMerchants().map((merchant) => [merchant.merchant_id, merchant.name]));
+  const merchants = new Map(runtime.getMerchants().map((merchant) => [merchant.merchant_id, merchant.name]));
   const modelProducts = products.map((product) => ({ ...product, merchant_name: merchants.get(product.merchant_id) }));
-  const choice = await naiveChoose({ instruction: mandate.original_instruction ?? '', products: modelProducts, sample_id: `naive:${run_id}` });
+  let choice = { items: [], reasoning: 'invalid' };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    choice = await runtime.naiveChoose({ instruction: mandate.original_instruction ?? '', products: modelProducts,
+      sample_id: `naive:${run_id}${attempt ? ':retry' : ''}` });
+    if (Array.isArray(choice?.items) && choice.items.length > 0
+      && choice.items.every((item) => products.some((product) => product.product_id === item.sku))) break;
+    choice = { items: [], reasoning: 'invalid' };
+  }
+  if (!choice.items.length) return { run_id, mode: 'naive', enforced: false, candidates: [], proposal: null,
+    naive_reasoning: 'The unprotected agent did not choose a listing.', would_have_been: null, violations: [] };
 
   const candidates = [];
   const proposal_id = proposalId();
   const extractionMap = {};
   const flagsMap = {};
   for (const product of products) {
-    const extracted = await extractListing(product);
+    const extracted = await runtime.extractListing(product);
     extractionMap[product.product_id] = extracted.ok ? extracted.extraction : null;
     flagsMap[product.product_id] = extracted.flags;
     event('LISTING_SANITIZED', mandate, proposal_id, { product_id: product.product_id, flags: extracted.flags });
@@ -220,12 +248,12 @@ export async function runNaive({ mandate, now = new Date() }) {
     would_have_been = await evaluate({
       mandate, proposal, catalogue: new Map(evalProducts.map((product) => [product.product_id, trustedProduct(product)])),
       extractions: new Map(Object.entries(displayExtractions)), sanitizeFlags: new Map(Object.entries(displayFlags)),
-      captured: listCapturedSkus(mandate.mandate_id).map((sku) => ({ mandate_id: mandate.mandate_id, sku })), now: instant,
+      captured: runtime.listCapturedSkus(mandate.mandate_id).map((sku) => ({ mandate_id: mandate.mandate_id, sku })), now: instant,
     });
   } catch { /* Fail closed for the comparison result; never promote a naive draft. */ }
   proposal.evidence.decision = would_have_been;
   proposal.would_have_been = would_have_been.decision;
-  saveProposal(proposal);
+  runtime.saveProposal(proposal);
   for (const item of items) {
     const product = byId.get(item.sku);
     candidates.push({ product_id: item.sku, decision: would_have_been.decision,
@@ -235,5 +263,8 @@ export async function runNaive({ mandate, now = new Date() }) {
     event('POLICY_DECISION', mandate, proposal_id, { product_id: item.sku, decision: would_have_been });
   }
   event('PROPOSAL_CREATED', mandate, proposal_id, { source: 'naive', status: 'DRAFT', would_have_been: would_have_been.decision });
-  return { run_id, mode: 'naive', enforced: false, candidates, proposal, naive_reasoning: choice.reasoning };
+  const violations = (would_have_been.reasons ?? []).filter((reason) => reason.source === 'deterministic')
+    .map(({ code, message }) => ({ code, message }));
+  return { run_id, mode: 'naive', enforced: false, candidates, proposal, naive_reasoning: choice.reasoning,
+    would_have_been: would_have_been.decision, violations };
 }

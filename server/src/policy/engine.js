@@ -24,10 +24,17 @@ function validExtraction(value) {
 
 export function evaluate(args = {}) {
   const { mandate, proposal, catalogue, extractions, sanitizeFlags, captured, now } = isObject(args) ? args : {};
+  const checksByCode = new Map();
   const checks = [];
   const reasons = [];
   const add = (code, passed, source, severity = 'BLOCK', message = code) => {
-    checks.push({ code, passed, source });
+    const existing = checksByCode.get(code);
+    if (existing) existing.passed = existing.passed && Boolean(passed);
+    else {
+      const check = { code, passed: Boolean(passed), source };
+      checksByCode.set(code, check);
+      checks.push(check);
+    }
     if (!passed) reasons.push({ code, severity, source, message });
     return passed;
   };

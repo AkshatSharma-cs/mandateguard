@@ -1,7 +1,7 @@
 <!-- docs/API.md -->
 # MandateGuard API
 
-The V3 endpoints are available under both `/v1` and `/api/v1`. The `/api/v1` prefix is intended for the web console proxy. Requests and responses use JSON.
+The V3 endpoints are available under `/v1`, `/api/v1`, and gateway aliases under `/api`. Requests and responses use JSON. The local build uses a shared `local-user` identity and currently has no API-key issuance or validation; keep it on localhost.
 
 ## Profiles
 
@@ -51,19 +51,30 @@ curl -X POST http://localhost:3000/v1/proposals \
   -d '{"evaluation_id":"EVALUATION_ID"}'
 ```
 
-The endpoint verifies that the evaluation is `ALLOW`, unexpired, and still bound to the current active mandate version. The resulting protected proposal can then use the existing checkout and capture endpoints.
+The endpoint verifies an `ALLOW` evaluation is fresh, priced, in the mandate currency, and bound to the current active mandate version. It computes `payment_mode`: `store_checkout` for a controlled demo-store checkout and `sandbox_simulation` otherwise. Simulated proposals return a fixed disclosure that nothing is purchased from the store and no real money moves. Success returns `{ "proposal": ..., "console_url": ... }`.
+
+For a demo-store catalogue id, `/v1/evaluate` resolves the observation from the server's catalogue and ignores caller-supplied listing fields. The returned `checkout_mode` is `gateway` only for curated products on configured demo-store domains. `DEMO_STORE_DOMAINS` is a comma-separated override; by default it is derived from the curated catalogue's `.localhost` stores. Other observations, including Channel3 and real-page observations, use `checkout_mode: handoff` for the separate “Open at store” action, while an allowed item may be paid only as a disclosed sandbox simulation.
+
+The handoff endpoint records `HANDOFF_OPENED` and returns the original server-stored URL. It never creates a proposal or order:
+
+```sh
+curl -X POST http://localhost:3000/v1/evaluations/EVALUATION_ID/handoff \
+  -H 'content-type: application/json' -d '{}'
+```
+
+The demo checkout description identifies the demo store as merchant and the PayPal Sandbox business account as recipient. No real purchase or shipment occurs. For a complete merchant-side caller, see [`INTEGRATION.md`](INTEGRATION.md) and [`../examples/merchant-agent.js`](../examples/merchant-agent.js).
 
 The browser companion can request another search with `POST /v1/search` and `{ "query": "wireless mouse", "observation": <ProductObservation> }`. The default profile is applied. Search uses the same policy checks, excludes the supplied observation's title and domain, and returns at most three allowed evaluations as `{ "alternatives": [...] }`. Search errors return an empty alternatives array so they do not change the primary evaluation.
 
 ## Marketplace discovery
 
-Agent runs and alternative searches use Channel3 when `CHANNEL3_API_KEY` is configured. The server searches by the task text, applies the profile's approved domains as marketplace filters when present, expands product offers into individual store listings, and prioritizes first-party offers and domains in `server/src/catalogue/trusted_domains.json`. The policy engine still makes the allow/review/block decision from the mandate and listing evidence; the domain list is a preference and ranking input, not a safety guarantee. `INCLUDE_DEMO_LISTINGS` defaults to `false`. If live search is unavailable, the API returns no live listings rather than substituting local demo products. The demo catalogue is included only when explicitly enabled.
+Agent runs and alternative searches use Channel3's indexed `POST /v1/search` endpoint when `CHANNEL3_API_KEY` is configured. Channel3 searches its product index; MandateGuard does not download the full catalog. Each agent run requests a bounded page (up to 12 products) so the policy pipeline can inspect each result within its analysis budget. The server sends the task query, region, profile's approved-domain filter, and maximum price when available, expands each product's offers into individual store listings, and ranks first-party offers and configured trusted domains first. It accepts the paginated response's `data` array and uses the live offer URL, domain, price and currency. The policy engine still makes the allow/review/block decision from the mandate and listing evidence; trusted domains are editable ranking configuration, not a safety guarantee. `INCLUDE_DEMO_LISTINGS` defaults to `false`. If live search is unavailable, the API returns no live listings rather than substituting local demo products. The demo catalogue is included only when explicitly enabled.
 
-Live marketplace listings open at their merchant offer URL. MandateGuard's PayPal sandbox checkout only supports products in its own trusted demo catalogue; a live marketplace listing is not sent to the MandateGuard PayPal capture flow.
+Live marketplace listings may use MandateGuard's PayPal sandbox flow as a simulation. The order description begins with `SANDBOX SIMULATION`; nothing is purchased from the marketplace and no real money moves. `GET /v1/proposals/{id}/receipt` returns the captured receipt, including all V1–V12 checks and audit verification; it returns 404 for an unknown proposal and 409 until capture.
 
 ## Error responses
 
-Errors use `{ "error": { "code": "...", "message": "..." } }`. Important codes include `NO_PREFERENCES` (409), `PROFILE_NOT_FOUND` (404), `PROFILE_INACTIVE` (409), `INVALID_PROFILE` (422), `MANDATE_STALE` (409), and `EVALUATION_EXPIRED` (409). Invalid request shapes return `VALIDATION_ERROR` (400).
+Errors use `{ "error": { "code": "...", "message": "..." } }`. Proposal creation can return `OBSERVATION_STALE`, `PRICE_UNKNOWN`, `CURRENCY_MISMATCH`, `DUPLICATE`, or `MANDATE_STALE` (all 409), and proposal creation is limited to ten attempts per hour per mandate. Other important codes include `NO_PREFERENCES` (409), `PROFILE_NOT_FOUND` (404), `PROFILE_INACTIVE` (409), and `INVALID_PROFILE` (422). Invalid request shapes return `VALIDATION_ERROR` (400).
 
 ## Scope note
 

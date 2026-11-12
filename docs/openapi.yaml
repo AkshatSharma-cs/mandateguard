@@ -2,20 +2,16 @@
 openapi: 3.1.0
 info:
   title: MandateGuard API
-  version: 3.0.0
+  version: 5.0.0
   description: >-
-    V3 profiles and task evaluation. The same routes are mounted under /v1 and /api/v1.
+    MandateGuard is an authorization gateway. A demo-store listing may use PayPal Sandbox;
+    other listings are evaluated and handed off without creating proposals or orders.
 servers:
   - url: http://localhost:3000/v1
-tags:
-  - name: Profiles
-  - name: Mandates
-  - name: Evaluation
 paths:
   /profiles:
     get:
-      tags: [Profiles]
-      summary: List profiles for the current owner
+      summary: List profiles for the local owner
       responses:
         '200':
           description: Profiles
@@ -29,7 +25,6 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Profile' }
     post:
-      tags: [Profiles]
       summary: Create a pending profile
       requestBody:
         required: true
@@ -49,7 +44,7 @@ paths:
                     instruction: { type: string, minLength: 1, maxLength: 10000 }
       responses:
         '201':
-          description: Created profile, awaiting user confirmation
+          description: Profile awaiting explicit confirmation
           content:
             application/json:
               schema:
@@ -57,48 +52,43 @@ paths:
                 required: [profile]
                 properties:
                   profile: { $ref: '#/components/schemas/Profile' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '422': { $ref: '#/components/responses/InvalidProfile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /profiles/{id}/confirm:
     post:
-      tags: [Profiles]
       summary: Confirm a pending profile
-      parameters:
-        - $ref: '#/components/parameters/Id'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200':
-          description: Active, user-confirmed profile
+          description: User-confirmed active profile
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   profile: { $ref: '#/components/schemas/Profile' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /profiles/{id}/default:
     post:
-      tags: [Profiles]
-      summary: Make a confirmed profile the owner's default
-      description: Clears any previous default profile for that owner atomically.
-      parameters:
-        - $ref: '#/components/parameters/Id'
+      summary: Set the confirmed profile as the owner's default
+      description: Replaces any previous default atomically.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200':
-          description: The sole default profile for the owner
+          description: Default profile
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   profile: { $ref: '#/components/schemas/Profile' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /mandates:
     post:
-      tags: [Mandates]
       summary: Create a task mandate
-      description: Uses the supplied profile or the owner's active default. A task inside profile limits auto-activates; an expansion stays pending with notes and exceeded keys.
+      description: Uses profile_id or the active default. An in-profile task auto-activates; an expansion remains pending and lists exceeded limits in notes.
       requestBody:
         required: true
         content:
@@ -122,14 +112,12 @@ paths:
                   notes: { type: array, items: { type: string } }
                   within_profile: { type: [boolean, 'null'] }
                   exceeded: { type: array, items: { type: string } }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/InvalidProfile' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
   /evaluate:
     post:
-      tags: [Evaluation]
-      summary: Evaluate one product observation
-      description: If mandate_id and profile_id are omitted, uses the active default profile. Alternatives default to true and are bounded to 12 seconds.
+      summary: Evaluate an observation against a mandate or default profile
+      description: Alternatives default to true and are bounded to 12 seconds. Omit both ids to use the active default profile.
       requestBody:
         required: true
         content:
@@ -142,24 +130,39 @@ paths:
                 mandate_id: { type: string }
                 profile_id: { type: string }
                 alternatives: { type: boolean, default: true }
-                observation: { $ref: '#/components/schemas/ProductObservation' }
+                observation: { $ref: '#/components/schemas/ProductObservationInput' }
       responses:
         '200':
           description: Decision and up to three allowed alternatives
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EvaluateResult' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400': { $ref: '#/components/responses/Error' }
         '409':
-          description: No usable profile or mandate
+          description: No preferences or other evaluation conflict
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
-              example: { error: { code: NO_PREFERENCES, message: Confirm a profile or provide an active mandate before evaluation. } }
+  /evaluations/{id}/handoff:
+    post:
+      summary: Audit and return the URL for an external listing
+      description: Appends HANDOFF_OPENED only. Does not create a proposal or PayPal order.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: External listing URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [handoff_url]
+                properties:
+                  handoff_url: { type: string, format: uri }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /proposals:
     post:
-      tags: [Evaluation]
-      summary: Create a protected proposal from an allowed evaluation
+      summary: Create a proposal from a saved ALLOW evaluation
       requestBody:
         required: true
         content:
@@ -172,20 +175,89 @@ paths:
                 evaluation_id: { type: string }
       responses:
         '201':
-          description: Created protected proposal
+          description: Protected proposal and console link
           content:
             application/json:
               schema:
                 type: object
+                required: [proposal, console_url]
                 properties:
-                  proposal: { type: object }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+                  proposal: { $ref: '#/components/schemas/Proposal' }
+                  console_url: { type: string, format: uri }
+        '409':
+          description: Evaluation is stale, unpriced, currency-mismatched, or the mandate is inactive
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/ErrorResponse' }
+  /proposals/{id}/checkout:
+    post:
+      summary: Create a PayPal Sandbox order or disclosed external purchase simulation
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: PayPal order id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paypal_order_id]
+                properties:
+                  paypal_order_id: { type: string }
+        '409':
+          description: Proposal is stale, invalid, or not allowed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /proposals/{id}/capture:
+    post:
+      summary: Verify and capture a buyer-approved PayPal Sandbox order
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [order_id]
+              properties:
+                order_id: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '200':
+          description: Capture result and verification checks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, checks, capture]
+                properties:
+                  status: { type: string }
+                  checks: { type: array, items: { type: object } }
+                  capture: { type: [object, 'null'] }
+        '409':
+          description: Verification refused capture
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/ErrorResponse' }
+  /proposals/{id}/receipt:
+    get:
+      summary: Get a captured PayPal Sandbox receipt
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Captured receipt with V1–V12 checks and audit status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /search:
     post:
-      tags: [Evaluation]
-      summary: Search for policy-allowed alternatives under the default profile
-      description: Searches within a 12 second budget and returns no more than three allowed evaluations. An optional observation lets the server exclude its title and domain.
+      summary: Search for allowed alternatives using the default profile
       requestBody:
         required: true
         content:
@@ -196,10 +268,10 @@ paths:
               required: [query]
               properties:
                 query: { type: string, minLength: 1, maxLength: 300 }
-                observation: { $ref: '#/components/schemas/ProductObservation' }
+                observation: { $ref: '#/components/schemas/ProductObservationInput' }
       responses:
         '200':
-          description: Allowed alternatives, empty if search fails or times out
+          description: Up to three allowed alternatives
           content:
             application/json:
               schema:
@@ -209,15 +281,7 @@ paths:
                   alternatives:
                     type: array
                     maxItems: 3
-                    items:
-                      type: object
-                      required: [evaluation_id, observation, decision, reasons]
-                      properties:
-                        evaluation_id: { type: string }
-                        observation: { $ref: '#/components/schemas/ProductObservation' }
-                        decision: { const: ALLOW }
-                        reasons: { type: array, maxItems: 0 }
-        '409': { $ref: '#/components/responses/Conflict' }
+                    items: { $ref: '#/components/schemas/Alternative' }
 components:
   parameters:
     Id:
@@ -231,7 +295,7 @@ components:
       additionalProperties: false
       required: [max_total, allow_bundles, allow_addons, require_first_party, allowed_domains]
       properties:
-        max_total: { type: string, pattern: '^\d+\.\d{2}$', description: Strict USD amount, at most 100000 cents. }
+        max_total: { type: string, pattern: '^\d+\.\d{2}$', description: USD amount up to 1000.00 }
         allow_bundles: { type: boolean }
         allow_addons: { type: boolean }
         require_first_party: { type: boolean }
@@ -239,7 +303,7 @@ components:
           type: array
           maxItems: 50
           uniqueItems: true
-          items: { type: string, format: hostname, description: Lower-case registrable domain, not a subdomain. }
+          items: { type: string, format: hostname }
     Mandate:
       type: object
       required: [mandate_id, kind, parent_profile_id, is_default, confirmed_by, item_query, category_terms, version, status, max_total_cents, allow_bundles, allow_addons, require_first_party, allowed_domains]
@@ -248,7 +312,7 @@ components:
         kind: { type: string, enum: [task, profile] }
         parent_profile_id: { type: [string, 'null'] }
         is_default: { type: boolean }
-        confirmed_by: { type: [string, 'null'], description: user or profile:<id> }
+        confirmed_by: { type: [string, 'null'] }
         item_query: { type: [string, 'null'] }
         category_terms: { type: array, items: { type: string } }
         version: { type: integer, minimum: 1 }
@@ -260,23 +324,24 @@ components:
         allowed_domains: { type: array, items: { type: string } }
     Profile:
       allOf:
-        - $ref: '#/components/schemas/Mandate'
+        - { $ref: '#/components/schemas/Mandate' }
         - type: object
           properties:
             kind: { const: profile }
             item_query: { type: 'null' }
-            is_default: { type: boolean }
-    ProductObservation:
+    ProductObservationInput:
       type: object
       additionalProperties: false
       required: [observation_id, url, domain, source, title, price_cents, currency, seller, sold_by_merchant, availability, image_url, category_hint, bundle_signal, hidden_text_found, text, captured_at, content_hash]
       properties:
         observation_id: { type: string }
+        checkout_mode: { type: string, enum: [gateway, handoff], description: Ignored; checkout mode is server-derived. }
+        handoff_url: { type: string, format: uri, description: Ignored; handoff URL is server-derived. }
         url: { type: string, format: uri }
-        domain: { type: string, format: hostname }
+        domain: { type: string }
         source: { type: string, enum: [curated, channel3, page] }
         title: { type: string }
-        price_cents: { type: integer, minimum: 0 }
+        price_cents: { type: [integer, 'null'], minimum: 0 }
         currency: { type: string, minLength: 3, maxLength: 3 }
         seller: { type: string }
         sold_by_merchant: { type: boolean }
@@ -288,27 +353,95 @@ components:
         text: { type: string, maxLength: 4000 }
         captured_at: { type: string, format: date-time }
         content_hash: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    Observation:
+      allOf:
+        - { $ref: '#/components/schemas/ProductObservationInput' }
+        - type: object
+          required: [checkout_mode]
+          properties:
+            checkout_mode: { type: string, enum: [gateway, handoff] }
+            handoff_url: { type: [string, 'null'], format: uri }
+    Alternative:
+      type: object
+      required: [evaluation_id, observation, decision, reasons, checkout_mode]
+      properties:
+        evaluation_id: { type: string }
+        observation: { $ref: '#/components/schemas/Observation' }
+        decision: { const: ALLOW }
+        reasons: { type: array, maxItems: 0 }
+        checkout_mode: { type: string, enum: [gateway, handoff] }
+        payment_mode: { type: string, enum: [store_checkout, sandbox_simulation] }
+        simulated: { type: boolean }
+        disclosure: { type: string }
+        handoff_url: { type: string, format: uri }
     EvaluateResult:
       type: object
-      required: [evaluation_id, decision, reasons, checks, observation, expires_at, alternatives]
+      required: [evaluation_id, decision, reasons, checks, observation, expires_at, alternatives, checkout_mode]
       properties:
         evaluation_id: { type: string }
         decision: { type: string, enum: [ALLOW, REVIEW, BLOCK] }
         reasons: { type: array, items: { type: object } }
         checks: { type: array, items: { type: object } }
-        observation: { $ref: '#/components/schemas/ProductObservation' }
+        observation: { $ref: '#/components/schemas/Observation' }
+        checkout_mode: { type: string, enum: [gateway, handoff] }
+        payment_mode: { type: string, enum: [store_checkout, sandbox_simulation] }
+        simulated: { type: boolean }
+        disclosure: { type: string }
+        handoff_url: { type: string, format: uri }
         expires_at: { type: string, format: date-time }
         alternatives:
           type: array
           maxItems: 3
-          items:
-            type: object
-            required: [evaluation_id, observation, decision, reasons]
-            properties:
-              evaluation_id: { type: string }
-              observation: { $ref: '#/components/schemas/ProductObservation' }
-              decision: { const: ALLOW }
-              reasons: { type: array, maxItems: 0 }
+          items: { $ref: '#/components/schemas/Alternative' }
+    CandidateFlags:
+      type: object
+      additionalProperties: false
+      required: [injection, hidden_text, urgency, price_conflict]
+      properties:
+        injection: { type: boolean, description: Listing text contains agent-directed instructions or an authority override. }
+        hidden_text: { type: boolean, description: Hidden or invisible listing text was detected. }
+        urgency: { type: boolean, description: Listing text pressures immediate action. }
+        price_conflict: { type: boolean, description: Claimed price differs from structured catalogue price. }
+    AgentCandidate:
+      type: object
+      required: [product_id, decision, reasons, checks, extraction, observation, flags]
+      properties:
+        product_id: { type: string }
+        decision: { type: string, enum: [ALLOW, REVIEW, BLOCK] }
+        reasons: { type: array, items: { type: object } }
+        checks: { type: array, items: { type: object } }
+        extraction: { type: [object, 'null'] }
+        observation: { $ref: '#/components/schemas/Observation' }
+        flags: { $ref: '#/components/schemas/CandidateFlags' }
+    Proposal:
+      type: object
+      properties:
+        proposal_id: { type: string }
+        mandate_id: { type: string }
+        mandate_version: { type: integer }
+        source: { type: string, enum: [protected, naive] }
+        status: { type: string }
+        checkout_mode: { type: string, enum: [gateway, handoff] }
+        payment_mode: { type: string, enum: [store_checkout, sandbox_simulation] }
+        simulated: { type: boolean }
+        disclosure: { type: string }
+        handoff_url: { type: string, format: uri }
+        items: { type: array, items: { type: object } }
+        total_cents: { type: integer }
+    Receipt:
+      type: object
+      required: [proposal_id, status, simulated, disclosure, product, paypal, checks, audit, created_at, captured_at]
+      properties:
+        proposal_id: { type: string }
+        status: { const: CAPTURED }
+        simulated: { type: boolean }
+        disclosure: { type: string }
+        product: { type: object }
+        paypal: { type: object }
+        checks: { type: array, items: { type: object, required: [id, passed, detail] } }
+        audit: { type: object, required: [chain_ok, events_count] }
+        created_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time }
     ErrorResponse:
       type: object
       required: [error]
@@ -319,24 +452,20 @@ components:
           properties:
             code: { type: string }
             message: { type: string }
+    HandoffConflict:
+      type: object
+      required: [error, handoff_url]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { const: CHECKOUT_NOT_CONTROLLED }
+            message: { type: string }
+        handoff_url: { type: string, format: uri }
   responses:
-    BadRequest:
-      description: Invalid request data
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-    InvalidProfile:
-      description: Profile data failed validation or parsing
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-    NotFound:
-      description: Requested resource was not found
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-    Conflict:
-      description: Resource is inactive, stale, expired, or in an invalid state
+    Error:
+      description: Error response
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }

@@ -24,6 +24,27 @@ function demoRank(product, queryTerms) {
   const haystack = tokens(`${product.title} ${product.category_hint ?? product.category ?? ''}`);
   return [...queryTerms].reduce((score, term) => score + (haystack.has(term) ? 1 : 0), 0);
 }
+function pageRows(body) {
+  if (Array.isArray(body)) return body;
+  // Channel3's HTTP search response is a paginated Page whose products live
+  // in `data`. Accept the common SDK/wrapper forms as well for proxy setups.
+  const candidates = [body?.data, body?.items, body?.products, body?.results,
+    body?.data?.items, body?.data?.products, body?.data?.results];
+  const rows = candidates.find(Array.isArray);
+  if (!rows) throw new Error('Channel3 returned an unexpected search response');
+  return rows;
+}
+function priceInCents(value) {
+  if (value && typeof value === 'object') {
+    return priceInCents(value.amount ?? value.value ?? value.price ?? value.minor_units);
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().replace(/[^\d.,-]/g, '').replace(/,(?=\d{3}(?:\D|$))/g, '').replace(',', '.');
+    value = Number(normalized);
+  }
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.round(value * 100);
+}
 function normalizeCategory(value, query) {
   const text = `${value ?? ''} ${query ?? ''}`.toLocaleLowerCase();
   for (const category of ['mouse', 'keyboard', 'headset', 'monitor', 'webcam']) {
@@ -32,7 +53,8 @@ function normalizeCategory(value, query) {
   return 'other';
 }
 function withSource(product, source = 'curated') {
-  const domain = String(product.domain ?? 'catalogue.local').toLowerCase();
+  const merchantSlug = String(product.merchant_id ?? 'catalogue').toLowerCase().replace(/^m_/, '').replace(/[^a-z0-9-]/g, '') || 'catalogue';
+  const domain = String(product.domain ?? `${merchantSlug}.localhost`).toLowerCase();
   return { ...product, source, domain,
     url: product.url ?? `http://${domain}:3000/demo-store/${encodeURIComponent(product.product_id)}.html`,
     marketplace_priority: marketplacePriority({ ...product, domain }) };
@@ -51,36 +73,35 @@ function diverse(products, limit) {
 export function createDiscovery({ fetchImpl = (...args) => fetch(...args), settings = config,
   catalogueProducts = getProducts, merchants = getMerchants } = {}) {
   let lastProvider = settings.CHANNEL3_API_KEY ? 'channel3' : 'curated';
-  async function channel3(query, limit, signal, allowedDomains = []) {
+  async function channel3(query, limit, signal, allowedDomains = [], maxPriceCents = null) {
     if (!settings.CHANNEL3_API_KEY) return null;
-    const filters = allowedDomains.length ? { website_ids: allowedDomains } : undefined;
+    const filters = {};
+    if (allowedDomains.length) filters.website_ids = allowedDomains;
+    if (Number.isSafeInteger(maxPriceCents) && maxPriceCents > 0) filters.price = { max_price: maxPriceCents / 100 };
     const response = await fetchImpl(`${settings.CHANNEL3_API_URL}/v1/search`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': settings.CHANNEL3_API_KEY },
-      body: JSON.stringify({ query, limit, config: { country: settings.CHANNEL3_REGION }, ...(filters ? { filters } : {}) }),
+      body: JSON.stringify({ query, limit, config: { country: settings.CHANNEL3_REGION }, ...(Object.keys(filters).length ? { filters } : {}) }),
       signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
     });
     if (!response.ok) throw new Error(`Channel3 returned HTTP ${response.status}`);
     const body = await response.json();
-    const rows = Array.isArray(body) ? body : (body.data ?? body.products ?? body.results ?? []);
+    const rows = pageRows(body);
     const merchantList = new Map(merchants().map((entry) => [entry.name.toLowerCase(), entry.merchant_id]));
     const results = [];
     rows.forEach((entry, index) => {
       const offers = Array.isArray(entry.offers) && entry.offers.length ? entry.offers : [entry.offer ?? entry];
       offers.forEach((offer, offerIndex) => {
-        // Channel3's ProductOffer price is commonly an object such as
-        // { price: 24.99, currency: "USD" }; accept the explicit cents form too.
-        const rawPrice = offer.price_cents ?? offer.price?.amount ?? offer.price?.value ?? offer.price?.price
-          ?? offer.price ?? entry.price_cents ?? entry.price?.amount ?? entry.price?.value ?? entry.price?.price
-          ?? entry.price;
-        const parsedPrice = typeof rawPrice === 'string'
-          ? Number(rawPrice.replace(/[^\d.,-]/g, '').replace(/,(?=\d{3}(?:\D|$))/g, '').replace(',', '.'))
-          : Number(rawPrice);
-        const price_cents = Number.isInteger(offer.price_cents) ? offer.price_cents : Math.round(parsedPrice * 100);
+        // Channel3 ProductOffer uses `price: { price, currency }`; some
+        // integrations expose amount/value or an explicit cents field.
+        const rawCents = offer.price_cents ?? entry.price_cents;
+        const rawPrice = offer.price ?? entry.price;
+        const price_cents = Number.isSafeInteger(rawCents) ? rawCents : priceInCents(rawPrice);
         const url = offer.url ?? entry.url ?? entry.product_url;
         if (!entry.title || !Number.isSafeInteger(price_cents) || price_cents <= 0 || !url) return;
         let parsedUrl; try { parsedUrl = new URL(url); } catch { return; }
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) return;
-        const domain = String(offer.domain ?? parsedUrl.hostname).toLowerCase();
+        const domain = registrableDomain(String(offer.domain ?? parsedUrl.hostname));
+        if (!domain) return;
         const sellerValue = offer.merchant?.name ?? offer.merchant ?? offer.seller?.name ?? offer.seller ?? offer.name ?? domain;
         const seller = String(sellerValue);
         const merchant_id = String(offer.merchant_id ?? entry.merchant_id ?? merchantList.get(seller.toLowerCase()) ?? `store:${registrableDomain(domain)}`);
@@ -97,18 +118,28 @@ export function createDiscovery({ fetchImpl = (...args) => fetch(...args), setti
     });
     return results;
   }
-  async function searchProducts(query, { limit = 12, item_query = query, category_terms = [], allowed_domains = [], signal } = {}) {
+  async function searchProducts(query, { limit = 12, item_query = query, category_terms = [], allowed_domains = [], max_price_cents = null, signal } = {}) {
     const safeLimit = Math.min(12, Math.max(1, Number(limit) || 12));
     const queryTerms = new Set([...tokens(query), ...tokens(item_query), ...category_terms.flatMap((term) => [...tokens(term)])]);
     if (!queryTerms.size) return [];
     const localProducts = settings.INCLUDE_DEMO_LISTINGS ? catalogueProducts().map((product) => withSource(product)) : [];
     let live = null;
-    try { live = await channel3(query, 12, signal, allowed_domains); } catch (error) { if (signal?.aborted) throw error; live = null; }
+    try { live = await channel3(query, safeLimit, signal, allowed_domains, max_price_cents); }
+    catch (error) {
+      if (signal?.aborted) throw error;
+      // Keep diagnostics useful without ever logging request bodies or credentials.
+      const status = /HTTP (\d{3})/.exec(error?.message ?? '')?.[1];
+      console.warn(`[discovery] Channel3 search failed${status ? ` (HTTP ${status})` : ''}; using curated fallback if enabled`);
+      live = null;
+    }
     const provider = live ? 'channel3' : 'curated';
     lastProvider = provider;
     const base = live ?? localProducts;
-    const scored = base.map((product) => ({ product, score: rank(product, queryTerms) }))
-      .filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.product.price_cents - b.product.price_cents)
+    const scored = base.map((product) => ({ product, score: live ? rank(product, queryTerms) : demoRank(product, queryTerms) }))
+      // Channel3 already performs indexed relevance search (including semantic
+      // matches); a local exact-token gate incorrectly discarded valid results.
+      .filter((entry) => entry.product.source === 'channel3' || entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.product.price_cents - b.product.price_cents)
       .map(({ product }) => product);
     let combined = scored;
     if (settings.INCLUDE_DEMO_LISTINGS) {

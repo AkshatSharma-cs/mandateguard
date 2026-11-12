@@ -84,7 +84,7 @@ async function authedFetch(method, path, { headers = {}, body } = {}) {
   return failIfNotOk(res, `${method} ${path.replace(/\/[A-Z0-9]{10,}/g, '/:id')}`);
 }
 
-export async function createOrder({ proposal_id, items, currency, mode }) {
+export async function createOrder({ proposal_id, items, currency, mode, sandbox_demo_payment = false, payment_mode = 'store_checkout', domain, title, payee_email, demo_store_order = false, merchant_name }) {
   if (!proposal_id) throw new Error('createOrder: proposal_id required');
   if (!Array.isArray(items) || items.length === 0) throw new Error('createOrder: items required');
   if (mode !== 'sdk' && mode !== 'redirect') throw new Error(`createOrder: invalid mode ${mode}`);
@@ -96,8 +96,8 @@ export async function createOrder({ proposal_id, items, currency, mode }) {
     }
     itemTotalCents += it.unit_price_cents * it.quantity;
     return {
-      name: it.name,
-      sku: it.sku,
+      name: `${payment_mode === 'sandbox_simulation' ? '' : sandbox_demo_payment ? 'Sandbox demo: ' : ''}${String(title ?? it.name).slice(0, 127)}`,
+      sku: payment_mode === 'sandbox_simulation' ? String(it.observation_id ?? it.sku).slice(0, 12) : it.sku,
       quantity: String(it.quantity),
       unit_amount: { currency_code: currency, value: fromCents(it.unit_price_cents) },
       category: 'PHYSICAL_GOODS',
@@ -105,22 +105,27 @@ export async function createOrder({ proposal_id, items, currency, mode }) {
   });
   const total = fromCents(itemTotalCents);
 
-  const body = {
-    intent: 'CAPTURE',
-    purchase_units: [
-      {
+  const purchaseUnit = {
+        ...(payee_email ? { payee: { email_address: payee_email } } : {}),
         reference_id: proposal_id,
         custom_id: proposal_id,
         invoice_id: proposal_id,
+        description: payment_mode === 'sandbox_simulation'
+          ? `SANDBOX SIMULATION (no purchase at ${String(domain ?? 'store')}): ${String(title ?? items[0].name)}`.slice(0, 127)
+          : demo_store_order ? `MandateGuard demo store order (sandbox): ${String(items[0].name).slice(0, 80)} from ${String(merchant_name ?? 'MandateGuard Demo Store').slice(0, 40)}`.slice(0, 127) : undefined,
         amount: {
           currency_code: currency,
           value: total,
           breakdown: { item_total: { currency_code: currency, value: total } },
         },
         items: ppItems,
-      },
-    ],
+      };
+  const body = {
+    intent: 'CAPTURE',
+    purchase_units: [purchaseUnit],
   };
+
+  // The demo store is the merchant and its configured Sandbox business account receives this payment; no real purchase or shipment occurs.
 
   if (mode === 'redirect') {
     const appBase = (process.env.APP_BASE_URL || '').replace(/\/+$/, '');

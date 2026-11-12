@@ -44,6 +44,31 @@ test('happy path allows a valid proposal and exact unit-price boundary', () => {
   assert.ok(codes(evaluate(atLimit)).includes('OVER_BUDGET'));
 });
 
+test('checks contain one entry per rule code for single and multi-item proposals', () => {
+  const single = input();
+  single.mandate.max_unit_price_cents = 2400;
+  single.mandate.max_total_cents = 2400;
+  single.proposal.total_cents = 2600;
+  single.proposal.items[0].unit_price_cents = 2500;
+  single.catalogue.get('p1').price_cents = 2500;
+  const singleResult = evaluate(single);
+  assert.equal(new Set(singleResult.checks.map((check) => check.code)).size, singleResult.checks.length);
+  assert.equal(singleResult.checks.find((check) => check.code === 'OVER_BUDGET').passed, false);
+  assert.equal(singleResult.checks.find((check) => check.code === 'PRICE_TAMPERED').passed, false);
+
+  const multiple = input();
+  multiple.mandate.max_unit_price_cents = 3000;
+  multiple.mandate.max_total_cents = 10000;
+  multiple.catalogue.set('p2', { ...product, product_id: 'p2', merchant_id: 'm_acme', price_cents: 3500 });
+  multiple.extractions.set('p2', { ...extraction });
+  multiple.sanitizeFlags.set('p2', { ...flags });
+  multiple.proposal.items.push({ sku: 'p2', name: 'Second mouse', quantity: 1, unit_price_cents: 3500 });
+  multiple.proposal.total_cents += 3500;
+  const multiResult = evaluate(multiple);
+  assert.equal(new Set(multiResult.checks.map((check) => check.code)).size, multiResult.checks.length);
+  assert.equal(multiResult.checks.find((check) => check.code === 'OVER_BUDGET').passed, false);
+});
+
 test('each contract rule fails closed with its exact reason code', () => {
   const cases = [
     ['MANDATE_INACTIVE', (x) => { x.mandate.status = 'pending_confirmation'; }],

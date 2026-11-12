@@ -7,7 +7,7 @@ const now = new Date('2026-11-09T12:00:00Z');
 const proposal = {
   proposal_id: 'pr1', proposal_id_ref: 'pr1', proposal_id: 'pr1', source: 'protected', status: 'ORDER_CREATED',
   paypal_order_id: 'order1', mandate_version: 1, currency: 'USD', total_cents: 2499,
-  items: [{ sku: 'p1', name: 'Mouse', quantity: 1, unit_price_cents: 2499 }],
+  items: [{ sku: 'p1', name: 'Mouse', quantity: 1, unit_price_cents: 2499 }], checkout_mode: 'gateway', payment_mode: 'store_checkout',
 };
 const mandate = { status: 'active', version: 1, expires_at: '2026-11-10T12:00:00Z' };
 const order = {
@@ -16,12 +16,12 @@ const order = {
     items: [{ sku: 'p1', quantity: '1', unit_amount: { currency_code: 'USD', value: '24.99' } }] }],
 };
 const verify = (overrides = {}) => verifyBeforeCapture({ proposal: structuredClone(proposal), mandate: structuredClone(mandate),
-  order: structuredClone(order), businessEmail: 'merchant@example.test', alreadyCaptured: false, policyDecision: 'ALLOW', now, ...overrides });
+  order: structuredClone(order), businessEmail: 'merchant@example.test', alreadyCaptured: false, policyDecision: 'ALLOW', paymentMode: 'store_checkout', now, ...overrides });
 
 test('all verification checks pass when the exact approved order is presented', () => {
   const result = verify();
   assert.equal(result.ok, true);
-  assert.equal(result.checks.length, 11);
+  assert.equal(result.checks.length, 12);
 });
 
 test('each V check fails closed on its tampering case', () => {
@@ -49,8 +49,20 @@ test('each V check fails closed on its tampering case', () => {
   }
   assert.equal(verify({ alreadyCaptured: true }).checks.find((item) => item.id === 'V10').passed, false);
   assert.equal(verify({ policyDecision: 'REVIEW' }).checks.find((item) => item.id === 'V11').passed, false);
+  const tampered = structuredClone(proposal); tampered.payment_mode = 'sandbox_simulation';
+  assert.equal(verify({ proposal: tampered, paymentMode: 'store_checkout' }).checks.find((item) => item.id === 'V12').passed, false);
 });
 
 test('missing payee is allowed when PayPal omits the field', () => {
   assert.equal(verify().checks.find((item) => item.id === 'V9').detail, 'payee not returned');
+});
+
+test('V12 accepts a correctly disclosed simulation and refuses a missing disclosure', () => {
+  const simulated = structuredClone(proposal); simulated.checkout_mode = 'handoff'; simulated.payment_mode = 'sandbox_simulation';
+  const disclosed = structuredClone(order); disclosed.purchase_units[0].description = 'SANDBOX SIMULATION (no purchase at example.test): Mouse';
+  const run = changes => verifyBeforeCapture({ proposal: simulated, mandate, order: changes, businessEmail: 'merchant@example.test',
+    alreadyCaptured: false, policyDecision: 'ALLOW', paymentMode: 'sandbox_simulation', now });
+  assert.equal(run(disclosed).checks.find(check => check.id === 'V12').passed, true);
+  disclosed.purchase_units[0].description = 'Mouse';
+  assert.equal(run(disclosed).checks.find(check => check.id === 'V12').passed, false);
 });

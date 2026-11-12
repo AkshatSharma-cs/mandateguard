@@ -8,6 +8,7 @@
     "start": "node server/src/index.js",
     "dev": "concurrently -k -n backend,web \"npm start\" \"npm --prefix web run dev\"",
     "build:web": "npm --prefix web run build",
+    "build:demo": "npm run build:web",
     "publish:results": "node scripts/publish-results.js",
     "spike": "node scripts/paypal-spike.js",
     "attacks": "node attacks/run.js"
@@ -32,6 +33,8 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "concurrently": "^10.0.7"
+    "concurrently": "^10.0.7",
+    "jsdom": "^29.1.1",
+    "yaml": "^2.9.1"
   }
 }

@@ -22,7 +22,9 @@ export async function naiveChooseWithStatus({ instruction, products, temperature
     if (beforeCall && !beforeCall()) return { choice: { items: [], reasoning: 'invalid' }, replayable: true, budget_exhausted: true };
     const output = await llmJson({ system, user, temperature, sample_id, signal });
     const parsed = schema.safeParse(output);
-    return { choice: parsed.success ? parsed.data : { items: [], reasoning: 'invalid' }, replayable: true };
+    const knownProducts = new Set(products.map((product) => product.product_id));
+    const validChoice = parsed.success && parsed.data.items.every((item) => knownProducts.has(item.sku));
+    return { choice: validChoice ? parsed.data : { items: [], reasoning: 'invalid' }, replayable: true };
   } catch (error) {
     return { choice: { items: [], reasoning: 'invalid' }, replayable: !(error instanceof ReplayMiss) };
   }

@@ -151,3 +151,35 @@ test('run budget emits REVIEW and SSE disconnect aborts pending work', async (t)
   unsubscribe();
   assert.equal(runInternals.runs.get(disconnectRun).cancel.signal.aborted, true);
 });
+
+test('naive comparison retries once and reports no choice without a fallback', async (t) => {
+  const base = await listeningServer(t);
+  const productSet = [{ ...product, discovery_provider: 'curated' }];
+  const runScenario = async (naiveChooseWithStatus, runTag) => {
+    const id = `naive-${runTag}-${Date.now()}-${Math.random()}`;
+    saveMandate(mandate(id));
+    const restore = setRunDependenciesForTests({ searchProducts: async () => productSet,
+      extractListing: async () => ({ ok: true, extraction, flags }), naiveChooseWithStatus, maxLlmCalls: 20, budgetMs: 1000 });
+    t.after(restore);
+    const response = await fetch(`${base}/api/agent/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mandate_id: id }) });
+    const { run_id } = await response.json();
+    return collectEvents(`${base}/api/agent/runs/${run_id}/events`);
+  };
+  let calls = 0;
+  const recovered = await runScenario(async () => {
+    calls += 1;
+    return calls === 1 ? { replayable: true, choice: { items: [], reasoning: 'invalid' } }
+      : { replayable: true, choice: { items: [{ sku: product.product_id, name: product.title, quantity: 1, unit_price_cents: product.price_cents }], reasoning: 'Selected the listing.' } };
+  }, 'retry');
+  assert.equal(calls, 2);
+  assert.ok(recovered.find(event => event.type === 'naive').data.proposal);
+
+  calls = 0;
+  const empty = await runScenario(async () => { calls += 1; return { replayable: true, choice: { items: [], reasoning: 'invalid' } }; }, 'empty');
+  const naiveEvent = empty.find(event => event.type === 'naive').data;
+  assert.equal(calls, 2);
+  assert.equal(naiveEvent.proposal, null);
+  assert.equal(naiveEvent.reasoning, 'The unprotected agent did not choose a listing.');
+  assert.deepEqual(naiveEvent.violations, []);
+  assert.equal(naiveEvent.would_have_been, null);
+});
