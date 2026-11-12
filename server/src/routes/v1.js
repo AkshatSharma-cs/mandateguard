@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { asyncHandler } from './mandates.js';
 import { db as defaultDb, getMandate as defaultGetMandate, getProposal as defaultGetProposal, getEvaluation as defaultGetEvaluation,
-  listMandates as defaultListMandates, listCapturedSkus as defaultListCapturedSkus, saveMandate as defaultSaveMandate,
+  listMandates as defaultListMandates, listCapturedSkus as defaultListCapturedSkus, saveMandate as defaultSaveMandate, consumeRateLimit as defaultConsumeRateLimit,
   saveProposal as defaultSaveProposal, saveEvaluation as defaultSaveEvaluation } from '../db.js';
 import { append as defaultAppend } from '../audit.js';
 import { getMerchants as defaultGetMerchants, getProducts as defaultGetProducts, getProduct as defaultGetProduct, searchProducts as defaultSearchProducts } from '../catalogue/index.js';
@@ -32,8 +32,12 @@ const getProducts = overrides.getProducts ?? defaultGetProducts;
 const searchProducts = overrides.searchProducts ?? defaultSearchProducts;
 const extractListing = overrides.extractListing ?? defaultExtractListing;
 const evaluate = overrides.evaluate ?? defaultEvaluate;
-const proposalAttempts = new Map();
 const profileService = overrides.profileService ?? makeProfileService({ database, append, getMandate, listMandates, saveMandate });
+const consumeProposalRateLimit = overrides.consumeProposalRateLimit ?? ((now) => defaultConsumeRateLimit('proposal_creation:local-user', {
+  // This app has one shared local-user identity. A single persistent bucket
+  // keeps storage bounded while enforcing the limit across restarts/processes.
+  limit: 60, windowMs: 60 * 60_000, now, database,
+}));
 const idSchema = z.object({ id: z.string().min(1).max(128) }).strict();
 const emptySchema = z.object({}).strict();
 const profileBodySchema = z.object({
@@ -443,10 +447,11 @@ router.post('/proposals', asyncHandler(async (req, res) => {
       captured: listCapturedSkus(mandate.mandate_id).map(sku => ({ mandate_id: mandate.mandate_id, sku })), now: new Date() });
     if (freshDecision.decision !== 'ALLOW') return res.status(409).json({ error: { code: 'POLICY_REJECTED', message: 'Policy re-evaluation rejected this proposal.' }, decision: freshDecision });
   }
-  const history = proposalAttempts.get(mandate.mandate_id) ?? [];
-  const recent = history.filter((timestamp) => Date.now() - timestamp < 60 * 60_000);
-  if (recent.length >= 10) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Proposal limit reached. Try again later.' } });
-  recent.push(Date.now()); proposalAttempts.set(mandate.mandate_id, recent);
+  const rateLimit = consumeProposalRateLimit(Date.now());
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(Math.max(1, Math.ceil(rateLimit.retry_after_ms / 1000))));
+    return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Proposal limit reached. Try again later.' } });
+  }
   const priorSameContent = database.prepare("SELECT json FROM proposals WHERE mandate_id = ? AND status = 'CAPTURED'")
     .all(mandate.mandate_id).some(row => JSON.parse(row.json).payment_observation?.content_hash === observed.content_hash);
   if (priorSameContent) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'This item was already purchased under this mandate.' } });

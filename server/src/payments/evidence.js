@@ -26,18 +26,20 @@ export function trustedMarketplaceProduct(product) {
 export function paymentEvidenceFor(product, catalogueProduct = product) {
   if (product.source === 'curated') return { evidence: { catalogue_hash: fingerprint([catalogueProduct]) }, proposal: {} };
 
+  if (!['channel3', 'page'].includes(product.source)) throw new Error('External payment evidence requires a known listing source');
+  const source = product.source;
   const snapshot = trustedMarketplaceProduct(product);
   const url = new URL(product.url);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Channel3 listing URL must use HTTP or HTTPS');
   return {
     evidence: {
       catalogue_hash: fingerprint([snapshot]),
-          marketplace_snapshot: { source: product.source, product: snapshot },
+      marketplace_snapshot: { source, product: snapshot },
     },
     proposal: {
       sandbox_demo_payment: true,
       sandbox_listing: {
-        source: 'channel3', title: String(product.title), url: url.toString(),
+        source, title: String(product.title), url: url.toString(),
         domain: String(product.domain), merchant_name: String(product.merchant_name ?? product.merchant_id),
       },
     },

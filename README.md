@@ -47,7 +47,7 @@ Node.js 20+, Express, better-sqlite3, Zod, React 19, TypeScript, Vite, Tailwind 
 5. Build the web console with `npm run build:demo`, then run `npm start`; or run backend and Vite together with `npm run dev`.
 6. Open `http://localhost:3000/app/` after the build, or `http://localhost:5173/app/` in development. Create and confirm a profile before running a protected search. To allow the sample demo-store product, include `acme.localhost` in approved websites.
 
-The local API uses a shared `local-user` identity and does not issue or validate API keys. Keep it on a trusted development machine; do not expose it publicly. `MG_API_KEY` shown in examples is for a deployment that supplies its own authentication layer.
+The server binds to `127.0.0.1` by default. It uses a shared `local-user` identity and does not issue or validate API keys. Keep it on a trusted development machine; do not expose it publicly. Setting `HOST` to a non-local address makes it reachable over the network and should only be done behind an authentication layer. `MG_API_KEY` shown in examples is for a deployment that supplies its own authentication layer.
 
 ## Browser companion
 
@@ -61,8 +61,6 @@ Run automated tests with `npm test`. Run the attack demonstration in replay mode
 
 - [Merchant integration quickstart](docs/INTEGRATION.md)
 - [API reference](docs/API.md) and [OpenAPI contract](docs/openapi.yaml)
-- [Devpost project write-up](docs/DEVPOST.md)
-- [Demo video outline](docs/VIDEO-SCRIPT.md)
 
 ## Limitations
 

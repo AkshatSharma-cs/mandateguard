@@ -88,5 +88,5 @@ export { app };
 export default app;
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  app.listen(config.PORT, () => console.log(`MandateGuard listening on port ${config.PORT}`));
+  app.listen(config.PORT, config.HOST, () => console.log(`MandateGuard listening at http://${config.HOST}:${config.PORT}`));
 }

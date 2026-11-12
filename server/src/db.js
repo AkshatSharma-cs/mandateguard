@@ -22,6 +22,10 @@ export function initializeDatabase(database) {
       event_type TEXT NOT NULL, mandate_id TEXT, proposal_id TEXT, payload TEXT NOT NULL,
       prev_hash TEXT NOT NULL, hash TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+      bucket_key TEXT PRIMARY KEY, window_start INTEGER NOT NULL,
+      count INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    );
   `);
   return database;
 }
@@ -104,4 +108,27 @@ export function listCapturedSkus(mandateId, database = db) {
 export function reserveCapture(proposalId) {
   return db.prepare("UPDATE proposals SET status = 'CAPTURE_PENDING' WHERE proposal_id = ? AND status = 'ORDER_CREATED'")
     .run(proposalId).changes === 1;
+}
+
+export function consumeRateLimit(bucketKey, { limit, windowMs, now = Date.now(), database = db } = {}) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(windowMs) || windowMs < 1
+    || !Number.isSafeInteger(now) || typeof bucketKey !== 'string' || !bucketKey) {
+    throw new TypeError('A rate-limit key, positive limit, window, and timestamp are required.');
+  }
+  return database.transaction(() => {
+    database.prepare('DELETE FROM rate_limit_buckets WHERE expires_at <= ?').run(now);
+    const current = database.prepare('SELECT window_start, count FROM rate_limit_buckets WHERE bucket_key = ?').get(bucketKey);
+    if (current && now < current.window_start + windowMs) {
+      if (current.count >= limit) {
+        return { allowed: false, retry_after_ms: Math.max(0, current.window_start + windowMs - now) };
+      }
+      database.prepare('UPDATE rate_limit_buckets SET count = count + 1 WHERE bucket_key = ?').run(bucketKey);
+      return { allowed: true, remaining: limit - current.count - 1, retry_after_ms: current.window_start + windowMs - now };
+    }
+    database.prepare(`INSERT INTO rate_limit_buckets(bucket_key, window_start, count, expires_at)
+      VALUES (?, ?, 1, ?) ON CONFLICT(bucket_key) DO UPDATE SET
+      window_start=excluded.window_start, count=1, expires_at=excluded.expires_at`)
+      .run(bucketKey, now, now + windowMs);
+    return { allowed: true, remaining: limit - 1, retry_after_ms: windowMs };
+  }).immediate();
 }

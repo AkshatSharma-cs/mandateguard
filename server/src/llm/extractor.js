@@ -31,8 +31,17 @@ export async function extractListing(product, { signal, beforeCall } = {}) {
   const sanitized = sanitize(`${product?.title ?? ''}\n${product?.description ?? ''}`);
   const cleanText = sanitized.clean_text.slice(0, 4000);
   const key = createHash('sha256').update(cleanText).digest('hex');
-  if (cache.has(key)) return { ...cache.get(key), flags: sanitized.flags };
   const flags = sanitized.flags;
+  const finalize = (rawExtraction) => {
+    const priceConflict = rawExtraction.claimed_price_cents !== null
+      && Number.isSafeInteger(product?.price_cents)
+      && rawExtraction.claimed_price_cents !== product.price_cents;
+    const flagged = rawExtraction.directives_to_agent || rawExtraction.asserts_authority_override
+      || rawExtraction.urgency_pressure || priceConflict || flags.zero_width
+      || flags.html_comment || flags.hidden_style;
+    return { ...rawExtraction, evidence: flagged ? [...rawExtraction.evidence] : [] };
+  };
+  if (cache.has(key)) return { ok: true, extraction: finalize(cache.get(key)), flags };
   const user = `<listing>${cleanText}</listing>`;
   let result;
   try {
@@ -48,15 +57,7 @@ export async function extractListing(product, { signal, beforeCall } = {}) {
       const output = await runtime.llmJson({ system, user, temperature: 0, sample_id: `listing:${key}${attempt ? ':retry' : ''}`, signal });
       const validated = validateExtraction(output);
       if (validated.success) {
-        const extraction = { ...validated.data };
-        const priceConflict = extraction.claimed_price_cents !== null
-          && Number.isSafeInteger(product?.price_cents)
-          && extraction.claimed_price_cents !== product.price_cents;
-        const flagged = extraction.directives_to_agent || extraction.asserts_authority_override
-          || extraction.urgency_pressure || priceConflict || flags.zero_width
-          || flags.html_comment || flags.hidden_style;
-        if (!flagged) extraction.evidence = [];
-        result = { ok: true, extraction, flags };
+        result = { ok: true, extraction: validated.data, flags };
         break;
       }
       if (attempt === 1) result = { ok: false, error: 'Invalid extraction response', flags };
@@ -64,11 +65,11 @@ export async function extractListing(product, { signal, beforeCall } = {}) {
   } catch (error) {
     result = { ok: false, error: error?.code === 'REPLAY_MISS' ? 'No recorded extraction available' : 'Extraction failed', flags };
   }
-  const { flags: _flags, ...cached } = result;
   // Cache only successful analyses. Provider outages, rate limits, malformed
   // output, and exhausted call budgets must be retried on the next run.
-  if (result.ok) cache.set(key, cached);
-  return result;
+  if (!result.ok) return result;
+  cache.set(key, { ...result.extraction, evidence: [...result.extraction.evidence] });
+  return { ...result, extraction: finalize(result.extraction) };
 }
 
 export function setExtractorDependenciesForTests(overrides = {}) {

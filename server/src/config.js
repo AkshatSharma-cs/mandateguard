@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  HOST: z.string().trim().min(1).default('127.0.0.1'),
   DB_PATH: z.string().min(1).default('./mandateguard.db'),
   LLM_MODE: z.enum(['live', 'record', 'replay']).default('replay'),
   LLM_PROVIDER: z.enum(['gemini', 'anthropic']).default('gemini'),
